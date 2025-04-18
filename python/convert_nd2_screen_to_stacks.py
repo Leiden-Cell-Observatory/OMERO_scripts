@@ -11,7 +11,13 @@ import argparse
 
 # Script for converting multi-position ND2 files to individual TIFF files
 # Based on the nd2 library: https://github.com/tlambert03/nd2/
-# TO DO add option to rename files based on metadata
+#
+# Version 2023-07-01: Initial version
+# Version 2024-04-17: Added export-folder argument for custom output location
+# Version 2024-04-17: Modified --max-projection to only save maximum intensity projections
+# Version 2024-04-17: Added file-prefix option for custom file naming (e.g., 250314_PDLO_FUCCI_day7fixed_)
+#
+#
 
 def guess_missing_position_names(f):
     """
@@ -94,7 +100,9 @@ def convert_nd2_to_tiff_by_well_stack(
     separate_channels=False,
     separate_z=False,
     guess_names=False,
-    max_projection=False
+    max_projection=False,
+    export_folder=None,
+    file_prefix=None
 ):
     """
     Convert an ND2 file containing well plate images to separate TIFF files.
@@ -105,17 +113,37 @@ def convert_nd2_to_tiff_by_well_stack(
         separate_channels (bool): If True, save each channel as a separate file
         separate_z (bool): If True, save each z-slice as a separate file
         guess_names (bool): If True, attempt to guess missing position names
+        max_projection (bool): If True, create maximum intensity projections only
+        export_folder (str): Custom export folder path (default is "export" subfolder)
+        file_prefix (str): Optional prefix to add to all output filenames (e.g., '250314_PDLO_FUCCI_day7fixed_')
     """
     # Create output directory
     input_path = Path(nd2_path)
-    output_dir = input_path.parent / "export"
-    output_dir.mkdir(exist_ok=True)
+    
+    # Use custom export folder if provided, otherwise use default
+    if export_folder:
+        export_path = Path(export_folder)
+        # If the export path is relative, make it relative to the input file's directory
+        if not export_path.is_absolute():
+            output_dir = input_path.parent / export_path
+        else:
+            output_dir = export_path
+    else:
+        output_dir = input_path.parent / "export"
+        
+    output_dir.mkdir(exist_ok=True, parents=True)
 
     print(f"Processing file: {input_path.name}")
     print(f"Output directory: {output_dir}")
     print(f"Options: skip_ome={skip_ome}, separate_channels={separate_channels}, "
           f"separate_z={separate_z}, guess_names={guess_names}, max_projection={max_projection}")
-
+    
+    if file_prefix:
+        print(f"Using file prefix: {file_prefix}")
+    
+    if max_projection:
+        print("Max projection mode: Only saving maximum intensity projections")
+    
     # Open ND2 file
     with nd2.ND2File(nd2_path) as f:
         # Get dimensions and metadata
@@ -243,9 +271,7 @@ def convert_nd2_to_tiff_by_well_stack(
 
                     # Update the image metadata to reflect it's a single position
                     if hasattr(position_ome_metadata.images[0], 'name'):
-                        position_ome_metadata.images[
-                            0
-                        ].name = base_output_filename
+                        position_ome_metadata.images[0].name = base_output_filename
 
                 try:
                     # Convert OME metadata to XML string
@@ -267,86 +293,104 @@ def convert_nd2_to_tiff_by_well_stack(
             }
 
             # Save the data based on the requested options
-            if separate_channels and separate_z:
-                # Save each channel and z-slice separately
-                for c in range(num_channels):
-                    for z in range(num_z):
-                        output_filename = f"{base_output_filename}_ch{c+1}_z{z+1:03d}.tif"
+            # Skip saving regular files if max_projection is True
+            if not max_projection:
+                if separate_channels and separate_z:
+                    # Save each channel and z-slice separately
+                    for c in range(num_channels):
+                        for z in range(num_z):
+                            if file_prefix:
+                                output_filename = f"{file_prefix}{position_name}_ch{c+1}_z{z+1:03d}.tif"
+                            else:
+                                output_filename = f"{base_output_filename}_ch{c+1}_z{z+1:03d}.tif"
+                            
+                            output_path = output_dir / output_filename
+                            print(f"Saving to: {output_path}")
+                            
+                            # Extract single channel and z-slice
+                            channel_z_data = position_data[z, c]
+                            
+                            # Save without OME metadata (not applicable for single images)
+                            tifffile.imwrite(
+                                output_path,
+                                channel_z_data,
+                                **common_imwrite_params
+                            )
+                            
+                elif separate_channels:
+                    # Save each channel separately (with all z-slices)
+                    for c in range(num_channels):
+                        if file_prefix:
+                            output_filename = f"{file_prefix}{position_name}_ch{c+1}.ome.tif"
+                        else:
+                            output_filename = f"{base_output_filename}_ch{c+1}.ome.tif"
+                        
                         output_path = output_dir / output_filename
                         print(f"Saving to: {output_path}")
                         
-                        # Extract single channel and z-slice
-                        channel_z_data = position_data[z, c]
+                        # Extract single channel across all z-slices
+                        channel_data = position_data[:, c]
                         
-                        # Save without OME metadata (not applicable for single images)
+                        # Add time dimension for 5D TZCYX format expected by OME-TIFF
+                        channel_data_with_t = np.expand_dims(np.expand_dims(channel_data, axis=1), axis=0)
+                        
+                        # Save with modified metadata
                         tifffile.imwrite(
                             output_path,
-                            channel_z_data,
+                            channel_data_with_t,
+                            metadata={"axes": "TZCYX"} if not skip_ome else None,
+                            description=ome_xml,
                             **common_imwrite_params
                         )
                         
-            elif separate_channels:
-                # Save each channel separately (with all z-slices)
-                for c in range(num_channels):
-                    output_filename = f"{base_output_filename}_ch{c+1}.ome.tif"
+                elif separate_z:
+                    # Save each z-slice separately (with all channels)
+                    for z in range(num_z):
+                        if file_prefix:
+                            output_filename = f"{file_prefix}{position_name}_z{z+1:03d}.ome.tif"
+                        else:
+                            output_filename = f"{base_output_filename}_z{z+1:03d}.ome.tif"
+                        
+                        output_path = output_dir / output_filename
+                        print(f"Saving to: {output_path}")
+                        
+                        # Extract single z-slice with all channels
+                        z_data = position_data[z]
+                        
+                        # Add time and z dimensions for 5D TZCYX format
+                        z_data_with_tz = np.expand_dims(np.expand_dims(z_data, axis=0), axis=0)
+                        
+                        # Save with modified metadata
+                        tifffile.imwrite(
+                            output_path,
+                            z_data_with_tz,
+                            metadata={"axes": "TZCYX"} if not skip_ome else None,
+                            description=ome_xml,
+                            **common_imwrite_params
+                        )
+                        
+                else:
+                    # Standard case: Save the whole position with all channels and z-slices
+                    if file_prefix:
+                        output_filename = f"{file_prefix}{position_name}.ome.tif"
+                    else:
+                        output_filename = f"{base_output_filename}.ome.tif"
+                    
                     output_path = output_dir / output_filename
                     print(f"Saving to: {output_path}")
-                    
-                    # Extract single channel across all z-slices
-                    channel_data = position_data[:, c]
                     
                     # Add time dimension for 5D TZCYX format expected by OME-TIFF
-                    channel_data_with_t = np.expand_dims(np.expand_dims(channel_data, axis=1), axis=0)
+                    position_data_with_t = np.expand_dims(position_data, axis=0)
                     
-                    # Save with modified metadata
+                    # Save with full OME metadata
                     tifffile.imwrite(
                         output_path,
-                        channel_data_with_t,
+                        position_data_with_t,
                         metadata={"axes": "TZCYX"} if not skip_ome else None,
                         description=ome_xml,
                         **common_imwrite_params
                     )
-                    
-            elif separate_z:
-                # Save each z-slice separately (with all channels)
-                for z in range(num_z):
-                    output_filename = f"{base_output_filename}_z{z+1:03d}.ome.tif"
-                    output_path = output_dir / output_filename
-                    print(f"Saving to: {output_path}")
-                    
-                    # Extract single z-slice with all channels
-                    z_data = position_data[z]
-                    
-                    # Add time and z dimensions for 5D TZCYX format
-                    z_data_with_tz = np.expand_dims(np.expand_dims(z_data, axis=0), axis=0)
-                    
-                    # Save with modified metadata
-                    tifffile.imwrite(
-                        output_path,
-                        z_data_with_tz,
-                        metadata={"axes": "TZCYX"} if not skip_ome else None,
-                        description=ome_xml,
-                        **common_imwrite_params
-                    )
-                    
-            else:
-                # Standard case: Save the whole position with all channels and z-slices
-                output_filename = f"{base_output_filename}.ome.tif"
-                output_path = output_dir / output_filename
-                print(f"Saving to: {output_path}")
-                
-                # Add time dimension for 5D TZCYX format expected by OME-TIFF
-                position_data_with_t = np.expand_dims(position_data, axis=0)
-                
-                # Save with full OME metadata
-                tifffile.imwrite(
-                    output_path,
-                    position_data_with_t,
-                    metadata={"axes": "TZCYX"} if not skip_ome else None,
-                    description=ome_xml,
-                    **common_imwrite_params
-                )
-                
+            
             # Create and save maximum intensity projections if requested and we have multiple Z slices
             if max_projection and num_z > 1:
                 # Create maximum intensity projection along the Z axis (axis 0)
@@ -355,7 +399,12 @@ def convert_nd2_to_tiff_by_well_stack(
                 if separate_channels:
                     # Save separate max projection for each channel
                     for c in range(num_channels):
-                        proj_filename = f"{base_output_filename}_ch{c+1}_max.tif"
+                        # Apply custom prefix if provided, otherwise use the base filename
+                        if file_prefix:
+                            proj_filename = f"{file_prefix}{position_name}_ch{c+1}.tif"
+                        else:
+                            proj_filename = f"{base_output_filename}_ch{c+1}_max.tif"
+                        
                         proj_path = output_dir / proj_filename
                         print(f"Saving max projection to: {proj_path}")
                         
@@ -370,7 +419,11 @@ def convert_nd2_to_tiff_by_well_stack(
                         )
                 else:
                     # Save all channels in one max projection file
-                    proj_filename = f"{base_output_filename}_max.ome.tif"
+                    if file_prefix:
+                        proj_filename = f"{file_prefix}{position_name}.ome.tif"
+                    else:
+                        proj_filename = f"{base_output_filename}_max.ome.tif"
+                    
                     proj_path = output_dir / proj_filename
                     print(f"Saving max projection to: {proj_path}")
                     
@@ -399,7 +452,10 @@ if __name__ == "__main__":
     parser.add_argument("--guess-names", action="store_true", 
                        help="Attempt to guess missing position names by assuming sequential frames belong to the same well")
     parser.add_argument("--max-projection", action="store_true",
-                       help="Create maximum intensity projections along the Z axis")
+                       help="Create and save only maximum intensity projections along the Z axis")
+    parser.add_argument("--export-folder", help="Custom export folder path (default is 'export' subfolder)")
+    parser.add_argument("--file-prefix", 
+                        help="Prefix to add to all output filenames (e.g., '250314_PDLO_FUCCI_day7fixed_')")
     
     args = parser.parse_args()
     
@@ -422,5 +478,7 @@ if __name__ == "__main__":
             separate_channels=args.separate_channels,
             separate_z=args.separate_z,
             guess_names=args.guess_names,
-            max_projection=args.max_projection
+            max_projection=args.max_projection,
+            export_folder=args.export_folder,
+            file_prefix=args.file_prefix
         )
