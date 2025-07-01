@@ -17,7 +17,11 @@ conda activate omero
 ### Connect to OMERO
 ```
 omero login
+#provide the connection details and credentials
+
 omero transfer pack Plate:1 Plate1.tar
+
+#This can be Image, Project, Dataset, Plate or Screen
 
 #extract only metadata
 omero transfer pack --binaries none Screen:1 Screen2_metadata.tar
