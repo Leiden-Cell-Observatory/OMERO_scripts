@@ -21,7 +21,12 @@ omero transfer pack Plate:1 Plate1.tar
 
 #extract only metadata
 omero transfer pack --binaries none Screen:1 Screen2_metadata.tar
+
+#create a simplified folder structure
+omero transfer pack --simple Plate:1 Plate1.tar
+
 ```
+
 
 ### issues with timeouts
 
