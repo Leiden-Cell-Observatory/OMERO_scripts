@@ -1,0 +1,185 @@
+---
+title: "OMERO API Access from R using Python Integration"
+author: "Maarten Paul"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Introduction
+
+This document demonstrates how to interact with OMERO servers from R using Python's ezomero package through the reticulate interface. This approach allows you to leverage OMERO's Python API while working in R for data analysis and visualization.
+
+## Package Installation and Setup
+
+First, we install required R packages and Python dependencies:
+
+```{r package_setup}
+# Install pacman if not available
+if(!require("pacman")){
+  install.packages("pacman")
+}
+
+# Load required R packages
+pacman::p_load(reticulate, EBImage)
+
+# Install required Python packages
+# Note: Adjust the zeroc-ice URL based on your OS and Python version
+# For Linux/Mac, see: https://www.glencoesoftware.com/blog/2023/12/08/ice-binaries-for-omero.html
+py_require("pandas")
+py_require("zeroc_ice @ https://github.com/glencoesoftware/zeroc-ice-py-win-x86_64/releases/download/20240325/zeroc_ice-3.6.5-cp311-cp311-win_amd64.whl")
+py_require("ezomero[tables]")
+```
+
+## OMERO Connection
+
+Establish connection to your OMERO server:
+
+```{r omero_connection}
+# Import ezomero Python module
+ezomero <- import("ezomero", convert = FALSE)
+
+# Connect to OMERO server
+# Adjust connection parameters for your OMERO instance
+conn <- ezomero$connect(
+  user = "root",
+  password = "omero", 
+  host = "localhost",
+  port = 4064,
+  group = "system",
+  secure = TRUE
+)
+
+print("Successfully connected to OMERO")
+```
+
+## Working with Tables
+
+### Downloading Tables from OMERO
+
+```{r download_table}
+# Download table from OMERO using file annotation ID
+# Replace 951L with your actual file annotation ID
+table_id <- 951L
+py$table <- ezomero$get_table(conn, file_ann_id = table_id) 
+print("Table downloaded to Python environment:")
+py$table
+
+# Convert directly to R data.frame
+table_df <- ezomero$get_table(conn, file_ann_id = table_id)
+print("Table as R data.frame:")
+head(table_df)
+```
+
+### Uploading Tables to OMERO
+
+```{r upload_table}
+# Upload R data.frame to OMERO
+# First convert to Python object
+py$mtcars <- mtcars
+
+# Upload table and link to specific image (adjust object_id)
+uploaded_table_id <- ezomero$post_table(
+  conn, 
+  py$mtcars,
+  object_type = "Image", 
+  object_id = 201L, 
+  title = "R mtcars dataset"
+)
+
+print(paste("Table uploaded with ID:", uploaded_table_id))
+
+# Verify upload by downloading again
+omero_table <- ezomero$get_table(conn, file_ann_id = uploaded_table_id) 
+print("Verified uploaded table:")
+head(omero_table)
+```
+
+## Working with Images
+
+### Downloading and Displaying Images
+
+```{r image_handling}
+# Download image from OMERO using image ID
+# Replace 51L with your actual image ID
+image_id <- 51L
+py$img <- ezomero$get_image(conn, image_id)
+
+# Extract pixel data
+pixels <- py$img[2]
+# Get specific slice: [t, c, z, y, x] - adjust indices as needed
+data <- pixels[[1]][1, 1, , , 1]
+
+# Normalize pixel values for visualization
+data <- data / max(data)
+
+# Display image using EBImage
+display(data, method = "browser")
+```
+
+## Adding Annotations
+
+### Key-Value Pair Annotations
+
+```{r map_annotations}
+# Add metadata as key-value pairs
+# Replace object_id with your target image ID
+map_annotation_id <- ezomero$post_map_annotation(
+  conn,
+  object_type = "Image", 
+  object_id = 201L, 
+  kv_dict = dict("Organism" = "Mouse", "Experiment_Date" = Sys.Date()), 
+  ns = "annotation/metadata"
+)
+
+print(paste("Map annotation created with ID:", map_annotation_id))
+```
+
+### File Attachments
+
+```{r file_attachments}
+# Upload file as attachment to OMERO object
+# Ensure the file exists in your working directory
+file_annotation_id <- ezomero$post_file_annotation(
+  conn,
+  file_path = "example_file.xlsx",  # Replace with your file
+  object_type = "Image", 
+  object_id = 201L,
+  description = paste("Uploaded on", Sys.Date())
+)
+
+print(paste("File attachment created with ID:", file_annotation_id))
+```
+
+## Cleanup
+
+Always close your OMERO connection when finished:
+
+```{r cleanup}
+# Close OMERO connection
+if(exists("conn")) {
+  ezomero$disconnect(conn)
+  print("OMERO connection closed")
+}
+```
+
+## Notes and Tips
+
+- **Platform Compatibility**: Adjust the `zeroc-ice` wheel URL based on your operating system and Python version
+- **Connection Parameters**: Modify the connection settings to match your OMERO server configuration
+- **Object IDs**: Replace example IDs (51L, 201L, 951L) with actual IDs from your OMERO instance
+- **Error Handling**: Add appropriate error handling for production use
+- **Performance**: For large datasets, consider processing data in chunks
+
+## Resources
+
+- [ezomero Documentation](https://thejacksonlaboratory.github.io/ezomero/ezomero.html)
+- [OMERO Documentation](https://docs.openmicroscopy.org/)
+- [Ice Binaries for OMERO](https://www.glencoesoftware.com/blog/2023/12/08/ice-binaries-for-omero.html)
