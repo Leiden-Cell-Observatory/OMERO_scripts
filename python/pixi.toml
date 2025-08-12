@@ -1,0 +1,36 @@
+[workspace]
+authors = ["Maarten Paul <maarten.paul@gmail.com>"]
+channels = ["conda-forge"]
+name = "python-omero"
+version = "0.1.0"
+description = "A reproducible environment for using the OMERO command-line tools and Python library."
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"] # Added arm64 for Apple Silicon Macs
+
+[tasks]
+# Task to run the main OMERO command-line interface.
+# Run with: `pixi run omero -- help`
+omero = "omero"
+
+# Task to start JupyterLab. It depends on the `start` task from the `jupyter` environment.
+# This makes it easy to run with a single command: `pixi run jupyter`
+jupyter = { depends-on = [{ environment = "jupyter", task = "start" }] }
+
+[dependencies]
+# Core dependencies required for the base environment.
+python = "3.10.*"
+zeroc-ice = ">=3.6.5,<4"
+omero-py = ">=5.21.0,<6"
+
+[pypi-dependencies]
+# Python packages from PyPI
+ezomero = ">=3.2.1, <4"
+
+# A feature for users who want to use JupyterLab.
+[feature.jupyter]
+dependencies = { jupyterlab = ">=4.1,<5" }
+tasks = { start = "jupyter lab --port 8888" }
+
+# A named environment for users who need JupyterLab.
+# This environment inherits all dependencies from the default environment and adds the 'jupyter' feature.
+[environments]
+jupyter = { features = ["jupyter"] }
