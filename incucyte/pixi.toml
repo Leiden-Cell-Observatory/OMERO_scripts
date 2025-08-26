@@ -2,7 +2,7 @@
 authors = ["Maarten Paul <maarten.paul@gmail.com>"]
 channels = ["conda-forge"]
 name = "incucyte"
-platforms = ["linux-64"]
+platforms = ["linux-64","win-64"]
 version = "0.1.0"
 
 [tasks]
@@ -15,3 +15,5 @@ numpy = ">=2.3.2,<3"
 
 [pypi-dependencies]
 ngff-zarr = ">=0.16.1, <0.17"
+ome-types = ">=0.6.1, <0.7"
+ome-zarr = ">=0.12.2, <0.13"

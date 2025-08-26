@@ -28,6 +28,17 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import defaultdict
 import tifffile
+import numpy as np
+
+__version__ = "1.0.0"
+
+# Try to import ome_types for proper OME-XML handling
+try:
+    from ome_types.model import OME, BinaryOnly
+    HAS_OME_TYPES = True
+except ImportError:
+    HAS_OME_TYPES = False
+    print("Warning: ome_types not available. Install with: pip install ome-types")
 import argparse
 
 __version__ = "1.1.0"
@@ -494,14 +505,12 @@ class IncucyteConverter:
     def convert_single_tiff_with_uuid(self, input_path, output_path, file_uuid):
         """Convert a single TIFF file with proper UUID embedding"""
         try:
-            
-
             # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Change extension to .ome.tif for proper OME-TIFF format
-            output_path = output_path.with_suffix(".ome.tif")
-
+            # Change extension to .tif (not .ome.tif) to avoid auto-generation
+            output_path = output_path.with_suffix(".tif")
+            
             print(f"Converting: {input_path.name} -> {output_path.name}")
 
             # Read the TIFF file with tifffile
@@ -524,25 +533,47 @@ class IncucyteConverter:
                     # Create minimal OME-XML with BinaryOnly element for multi-file dataset
                     if file_uuid:
                         minimal_ome = self.create_minimal_ome_xml_with_uuid(file_uuid)
+                        print(f"  Generated OME-XML with UUID: {file_uuid}")
+                        print(f"  XML preview: {minimal_ome[:150]}...")
                     else:
                         # Fallback to regular OME-XML if no UUID provided
                         minimal_ome = self.create_minimal_ome_xml(
                             image_data.shape, image_data.dtype
                         )
+                        print(f"  XML preview: {minimal_ome[:150]}...")
 
-                    # Save as OME-TIFF with embedded UUID metadata
+                    # Save as regular TIFF with embedded OME-XML (no auto-generation)
+                    # Using .tif extension prevents tifffile from auto-generating OME structure
                     tifffile.imwrite(
                         str(output_path),
                         image_data,
-                        imagej=False,  # Don't use ImageJ format for proper OME-TIFF
-                        photometric="minisblack"
-                        if len(image_data.shape) == 2
-                        else "rgb",
-                        description=minimal_ome,  # Embed the minimal OME-XML
+                        compression=None,
+                        description=minimal_ome,  # Our clean OME-XML with UUID
+                        photometric='minisblack' if len(image_data.shape) == 2 else 'rgb',
+                        software=f"incucyte_ome_generator {__version__}",
                     )
+                    
+                    if file_uuid:
+                        print("  Saved as .tif with embedded OME-XML and UUID")
+                    else:
+                        print("  Saved as .tif with embedded OME-XML")
+
+                    # VERIFY the XML was embedded correctly
+                    if file_uuid:
+                        try:
+                            with tifffile.TiffFile(str(output_path)) as verify_tif:
+                                embedded_desc = verify_tif.pages[0].description
+                                if embedded_desc and file_uuid in embedded_desc:
+                                    print(f"✓ UUID successfully embedded and verified")
+                                elif embedded_desc:
+                                    print(f"⚠ XML embedded but UUID not found in: {embedded_desc[:100]}...")
+                                else:
+                                    print(f"⚠ No description/XML found in written TIFF")
+                        except Exception as verify_e:
+                            print(f"⚠ Could not verify embedding: {verify_e}")
 
                     if file_uuid:
-                        print(f"✓ Converted successfully with UUID: {file_uuid[:50]}...")
+                        print(f"✓ Converted successfully with UUID")
                     else:
                         print(f"✓ Converted successfully")
                     return True
@@ -561,15 +592,110 @@ class IncucyteConverter:
     
     def create_minimal_ome_xml_with_uuid(self, file_uuid):
         """Create minimal OME-XML with BinaryOnly element referencing companion file"""
-        minimal_ome = f'''<?xml version="1.0" encoding="UTF-8"?>
-<OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
-     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-     xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06
-     http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd"
-     UUID="{file_uuid}">
-   <BinaryOnly MetadataFile="companion.companion.ome" UUID="{self.master_uuid}"/>
-</OME>'''
+        # Ensure master UUID exists
+        if not self.master_uuid:
+            self.master_uuid = "urn:uuid:%s" % str(uuid_module.uuid4())
+        
+        # Use ome_types if available for proper OME-XML structure
+        if HAS_OME_TYPES:
+            try:
+                print(f"  Using ome-types to generate OME-XML")
+                # Create OME object with UUID
+                ome = OME(uuid=file_uuid)
+                
+                # Add BinaryOnly reference to companion file
+                binary_only = BinaryOnly(
+                    metadata_file="companion.companion.ome",
+                    uuid=self.master_uuid
+                )
+                ome.binary_only = binary_only
+                
+                # Convert to XML string
+                xml_output = ome.to_xml()
+                print(f"  ome-types generated {len(xml_output)} characters of XML")
+                return xml_output
+                
+            except Exception as e:
+                print(f"Warning: ome_types failed ({e}), falling back to manual XML")
+        else:
+            print(f"  ome-types not available, using manual XML generation")
+        
+        # Fallback to manual XML generation
+        print(f"  Using manual XML generation")
+        minimal_ome = f'<?xml version="1.0" encoding="UTF-8"?><OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06 http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd" UUID="{file_uuid}"><BinaryOnly MetadataFile="companion.companion.ome" UUID="{self.master_uuid}"/></OME>'
         return minimal_ome
+
+    def test_uuid_embedding(self):
+        """Test UUID embedding in OME-TIFF files"""
+        print("\n=== Testing UUID embedding ===")
+        
+        # Find test files in your converted output (now .tif files)
+        test_files = list(self.output_dir.glob("*/*.tif"))
+        if not test_files:
+            print("No TIFF files found to test")
+            return False
+        
+        # Test first 3 files
+        for i, test_file in enumerate(test_files[:3]):
+            print(f"\n--- Testing file {i+1}: {test_file.name} ---")
+            
+            try:
+                with tifffile.TiffFile(str(test_file)) as tif:
+                    # Check if description exists
+                    desc = tif.pages[0].description
+                    if desc:
+                        print(f"Description found: {len(desc)} characters")
+                        
+                        # Check if it starts with XML declaration (good sign)
+                        if desc.startswith('<?xml'):
+                            print("✓ Starts with XML declaration")
+                        else:
+                            print("⚠ Does not start with XML declaration")
+                        
+                        # Check for nested OME elements (bad sign)
+                        ome_count = desc.count('<OME')
+                        if ome_count == 1:
+                            print("✓ Single OME root element found")
+                        elif ome_count > 1:
+                            print(f"⚠ Multiple OME elements found ({ome_count}) - indicates nesting issue")
+                        else:
+                            print("✗ No OME elements found")
+                        
+                        # Print the structure for analysis
+                        print(f"Full XML content:")
+                        print(desc)
+                        print("--- End XML ---")
+                        
+                        # Check for UUID patterns
+                        import re
+                        uuid_pattern = r'UUID="(urn:uuid:[a-f0-9-]+)"'
+                        matches = re.findall(uuid_pattern, desc)
+                        if matches:
+                            print(f"✓ Found {len(matches)} UUID(s):")
+                            for j, uuid in enumerate(matches):
+                                print(f"  UUID {j+1}: {uuid}")
+                        else:
+                            print("✗ No UUIDs found in XML")
+                        
+                        # Check for BinaryOnly element
+                        if "BinaryOnly" in desc:
+                            print("✓ BinaryOnly element found")
+                        else:
+                            print("✗ BinaryOnly element not found")
+                            
+                        # Check for companion reference
+                        if "companion.companion.ome" in desc:
+                            print("✓ Companion file reference found")
+                        else:
+                            print("✗ Companion file reference not found")
+                            
+                    else:
+                        print("✗ No description/XML found in TIFF")
+                        
+            except Exception as e:
+                print(f"Error reading file: {e}")
+                
+        return True
 
     def find_converted_files(self):
         """Find already converted files in output directory"""
@@ -584,7 +710,7 @@ class IncucyteConverter:
                 continue
 
             timestamp = timepoint_dir.name
-            for tiff_file in timepoint_dir.glob("*.ome.tif"):
+            for tiff_file in timepoint_dir.glob("*.tif"):
                 # Parse converted filename: WELL_FXX_CHANNEL_TTIMESTAMP.ome.tif
                 match = re.match(
                     r"([A-Z]\d+)_F(\d+)_(.+)_T(.+)\.ome\.tif", tiff_file.name
@@ -748,7 +874,7 @@ class IncucyteConverter:
         height, width = shape[:2]
 
         # Generate unique UUID for this image
-        image_uuid = str(uuid.uuid4())
+        image_uuid = str(uuid_module.uuid4())
 
         ome_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
@@ -780,6 +906,424 @@ class IncucyteConverter:
             print(f"Error reading TIFF dimensions: {e}, using defaults")
             return 2048, 2048
 
+    def convert_to_single_ome_tiff(self):
+        """Convert all Incucyte TIFFs to a single OME-TIFF file with plate structure"""
+        structure = self.scan_structure()
+        
+        if not structure["timepoints"]:
+            print("No timepoints found to convert")
+            return False
+        
+        print("Converting to single OME-TIFF with plate structure...")
+        
+        # Collect all image data first
+        wells = sorted(structure["wells"])
+        channels = sorted(structure["channels"])
+        timepoints = sorted(structure["timepoints"], key=lambda x: x["timestamp"])
+        fields = sorted(structure["fields"])
+        
+        print(f"Processing: {len(wells)} wells, {len(channels)} channels, {len(timepoints)} timepoints, {len(fields)} fields")
+        
+        # Organize data by well -> field -> channel -> time
+        organized_data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        
+        for timepoint in timepoints:
+            print(f"Processing timepoint: {timepoint['timestamp']}")
+            
+            for tiff_file in timepoint["path"].glob("*.tif"):
+                well, field, channel = self.parse_filename(tiff_file.name)
+                if well and field is not None and channel:
+                    try:
+                        with tifffile.TiffFile(str(tiff_file)) as tif:
+                            if len(tif.pages) > 0:
+                                image_data = tif.pages[0].asarray()
+                                organized_data[well][field][channel].append({
+                                    'data': image_data,
+                                    'timepoint': timepoint['timestamp']
+                                })
+                    except Exception as e:
+                        print(f"Error reading {tiff_file}: {e}")
+        
+        if not organized_data:
+            print("No valid image data found")
+            return False
+        
+        # Get image dimensions from first image
+        first_well = next(iter(organized_data.keys()))
+        first_field = next(iter(organized_data[first_well].keys()))
+        first_channel = next(iter(organized_data[first_well][first_field].keys()))
+        first_image = organized_data[first_well][first_field][first_channel][0]['data']
+        height, width = first_image.shape[:2]
+        dtype = first_image.dtype
+        
+        print(f"Image dimensions: {width}x{height}, dtype: {dtype}")
+        
+        # Calculate total dimensions
+        num_wells = len(wells)
+        num_fields = len(fields)
+        num_channels = len(channels) 
+        num_timepoints = len(timepoints)
+        
+        # Create single OME-TIFF file
+        output_file = self.output_dir / "incucyte_plate.ome.tif"
+        
+        print(f"Writing single OME-TIFF: {output_file}")
+        
+        # Create OME metadata for plate structure
+        pixel_size_um = 1.0  # Adjust as needed
+        
+        with tifffile.TiffWriter(str(output_file), bigtiff=True) as tif:
+            # Build comprehensive OME metadata
+            metadata = {
+                'axes': 'TCYX',  # Time, Channel, Y, X (per image series)
+                'SignificantBits': 16,
+                'PhysicalSizeX': pixel_size_um,
+                'PhysicalSizeXUnit': 'µm',
+                'PhysicalSizeY': pixel_size_um, 
+                'PhysicalSizeYUnit': 'µm',
+                'TimeIncrement': 1.0,  # Adjust based on your time intervals
+                'TimeIncrementUnit': 'h',
+                'Channel': {
+                    'Name': [self.get_channel_name(ch) for ch in channels],
+                    'SamplesPerPixel': [1] * len(channels)
+                },
+                'Plate': {
+                    'ID': 'Plate:0',
+                    'Name': 'Incucyte_Experiment',
+                    'RowNamingConvention': 'letter',
+                    'ColumnNamingConvention': 'number',
+                    'Rows': max(ord(w[0]) - ord('A') + 1 for w in wells),
+                    'Columns': max(int(w[1:]) for w in wells)
+                },
+                'Description': f'Incucyte experiment with {len(wells)} wells, {len(channels)} channels, {len(timepoints)} timepoints'
+            }
+            
+            # Write image data organized by plate position
+            image_count = 0
+            for well_idx, well_name in enumerate(wells):
+                if well_name not in organized_data:
+                    continue
+                    
+                for field_idx, field_num in enumerate(fields):
+                    if field_num not in organized_data[well_name]:
+                        continue
+                    
+                    # Create 4D array: TCYX (time, channel, y, x)
+                    well_field_data = np.zeros((num_timepoints, num_channels, height, width), dtype=dtype)
+                    
+                    # Fill the array with actual data
+                    for channel_idx, channel in enumerate(channels):
+                        if channel in organized_data[well_name][field_num]:
+                            channel_data = organized_data[well_name][field_num][channel]
+                            
+                            # Sort by timepoint
+                            channel_data.sort(key=lambda x: x['timepoint'])
+                            
+                            for time_idx, time_data in enumerate(channel_data):
+                                if time_idx < num_timepoints:
+                                    well_field_data[time_idx, channel_idx] = time_data['data']
+                    
+                    # Add well/field specific metadata
+                    image_metadata = metadata.copy()
+                    image_metadata.update({
+                        'Name': f'{well_name}_Field{field_num}',
+                        'Well': {
+                            'ID': f'Well:{well_idx}',
+                            'Row': ord(well_name[0]) - ord('A'),
+                            'Column': int(well_name[1:]) - 1
+                        },
+                        'WellSample': {
+                            'ID': f'WellSample:{image_count}',
+                            'Index': field_idx,
+                            'PositionX': 0.0,  # Adjust if you have stage positions
+                            'PositionY': 0.0,
+                            'PositionXUnit': 'µm',
+                            'PositionYUnit': 'µm'
+                        }
+                    })
+                    
+                    print(f"Writing {well_name}_Field{field_num}: {well_field_data.shape}")
+                    
+                    # Write this well/field as a series in the OME-TIFF
+                    tif.write(
+                        well_field_data,
+                        photometric='minisblack',
+                        compression='lzw',  # Use compression to save space
+                        predictor=True,     # Improve compression
+                        tile=(256, 256),    # Use tiling for better performance
+                        metadata=image_metadata,
+                        resolution=(10000.0/pixel_size_um, 10000.0/pixel_size_um),  # Convert to pixels per cm
+                        resolutionunit='CENTIMETER'
+                    )
+                    
+                    image_count += 1
+        
+        print(f"✓ Successfully created single OME-TIFF: {output_file}")
+        print(f"  Contains {image_count} image series (well/field combinations)")
+        print(f"  Each series: {num_timepoints}T x {num_channels}C x {height}x{width}px")
+        
+        return str(output_file)
+
+    def convert_to_single_ome_tiff_simple(self):
+        """Simpler version - create one big 5D array with all data"""
+        structure = self.scan_structure()
+        
+        if not structure["timepoints"]:
+            print("No timepoints found to convert")
+            return False
+        
+        print("Converting to single 5D OME-TIFF...")
+        
+        wells = sorted(structure["wells"])
+        channels = sorted(structure["channels"]) 
+        timepoints = sorted(structure["timepoints"], key=lambda x: x["timestamp"])
+        fields = sorted(structure["fields"])
+        
+        # For simplicity, assume 1 field per well
+        if len(fields) > 1:
+            print("Warning: Multiple fields detected, using field 1 only")
+            fields = [1]
+        
+        print(f"Dimensions: {len(wells)} wells, {len(channels)} channels, {len(timepoints)} timepoints")
+        
+        # Get image dimensions
+        first_file = None
+        for timepoint in timepoints:
+            for tiff_file in timepoint["path"].glob("*.tif"):
+                first_file = tiff_file
+                break
+            if first_file:
+                break
+        
+        if not first_file:
+            print("No TIFF files found")
+            return False
+            
+        with tifffile.TiffFile(str(first_file)) as tif:
+            sample_image = tif.pages[0].asarray()
+            height, width = sample_image.shape[:2]
+            dtype = sample_image.dtype
+        
+        print(f"Image dimensions: {width}x{height}, dtype: {dtype}")
+        
+        # Create 5D array: PTCYX (Position/Well, Time, Channel, Y, X)
+        full_data = np.zeros((len(wells), len(timepoints), len(channels), height, width), dtype=dtype)
+        
+        # Fill the array
+        for t_idx, timepoint in enumerate(timepoints):
+            print(f"Processing timepoint {t_idx+1}/{len(timepoints)}: {timepoint['timestamp']}")
+            
+            for tiff_file in timepoint["path"].glob("*.tif"):
+                well, field, channel = self.parse_filename(tiff_file.name)
+                if well and field == 1 and channel:  # Only field 1
+                    try:
+                        well_idx = wells.index(well)
+                        channel_idx = channels.index(channel)
+                        
+                        with tifffile.TiffFile(str(tiff_file)) as tif:
+                            if len(tif.pages) > 0:
+                                image_data = tif.pages[0].asarray()
+                                full_data[well_idx, t_idx, channel_idx] = image_data
+                                
+                    except (ValueError, IndexError) as e:
+                        print(f"Skipping {tiff_file.name}: {e}")
+                    except Exception as e:
+                        print(f"Error reading {tiff_file.name}: {e}")
+        
+        # Write single OME-TIFF
+        output_file = self.output_dir / "incucyte_simple.ome.tif"
+        
+        # Calculate plate dimensions
+        max_row = max(ord(w[0]) - ord('A') + 1 for w in wells)
+        max_col = max(int(w[1:]) for w in wells)
+        
+        metadata = {
+            'axes': 'PTCYX',
+            'SignificantBits': 16,
+            'PhysicalSizeX': 1.0,
+            'PhysicalSizeXUnit': 'µm',
+            'PhysicalSizeY': 1.0,
+            'PhysicalSizeYUnit': 'µm',
+            'TimeIncrement': 1.0,
+            'TimeIncrementUnit': 'h',
+            'Channel': {
+                'Name': [self.get_channel_name(ch) for ch in channels]
+            },
+            'Plate': {
+                'Name': 'Incucyte_Experiment',
+                'Rows': max_row,
+                'Columns': max_col
+            },
+            'Well': [{'Name': well, 'Row': ord(well[0]) - ord('A'), 'Column': int(well[1:]) - 1} for well in wells]
+        }
+        
+        print(f"Writing OME-TIFF: {output_file}")
+        
+        tifffile.imwrite(
+            str(output_file),
+            full_data,
+            bigtiff=True,
+            photometric='minisblack',
+            compression='lzw',
+            predictor=True,
+            tile=(256, 256),
+            metadata=metadata
+        )
+        
+        print(f"✓ Created single OME-TIFF: {output_file}")
+        print(f"  Shape: {full_data.shape} (Wells, Time, Channels, Y, X)")
+        
+        return str(output_file)
+
+    def convert_to_well_field_ome_tiffs(self):
+        """Convert Incucyte TIFFs to separate OME-TIFF files per well and field combination"""
+        structure = self.scan_structure()
+        
+        if not structure["timepoints"]:
+            print("No timepoints found to convert")
+            return []
+        
+        print("Converting to separate OME-TIFF files per well and field...")
+        
+        wells = sorted(structure["wells"])
+        channels = sorted(structure["channels"])
+        timepoints = sorted(structure["timepoints"], key=lambda x: x["timestamp"])
+        fields = sorted(structure["fields"])
+        
+        print(f"Processing: {len(wells)} wells, {len(channels)} channels, {len(timepoints)} timepoints, {len(fields)} fields")
+        
+        # Organize data by well -> field -> channel -> time
+        organized_data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        
+        for timepoint in timepoints:
+            print(f"Processing timepoint: {timepoint['timestamp']}")
+            
+            for tiff_file in timepoint["path"].glob("*.tif"):
+                well, field, channel = self.parse_filename(tiff_file.name)
+                if well and field is not None and channel:
+                    try:
+                        with tifffile.TiffFile(str(tiff_file)) as tif:
+                            if len(tif.pages) > 0:
+                                image_data = tif.pages[0].asarray()
+                                organized_data[well][field][channel].append({
+                                    'data': image_data,
+                                    'timepoint': timepoint['timestamp']
+                                })
+                    except Exception as e:
+                        print(f"Error reading {tiff_file}: {e}")
+        
+        if not organized_data:
+            print("No valid image data found")
+            return []
+        
+        # Get image dimensions from first image
+        first_well = next(iter(organized_data.keys()))
+        first_field = next(iter(organized_data[first_well].keys()))
+        first_channel = next(iter(organized_data[first_well][first_field].keys()))
+        first_image = organized_data[first_well][first_field][first_channel][0]['data']
+        height, width = first_image.shape[:2]
+        dtype = first_image.dtype
+        
+        print(f"Image dimensions: {width}x{height}, dtype: {dtype}")
+        
+        # Create output directory for well-field files
+        well_field_dir = self.output_dir / "well_field_ome_tiffs"
+        well_field_dir.mkdir(exist_ok=True)
+        
+        created_files = []
+        pixel_size_um = 1.0  # Adjust as needed
+        
+        # Process each well-field combination
+        for well_name in wells:
+            if well_name not in organized_data:
+                continue
+                
+            for field_num in fields:
+                if field_num not in organized_data[well_name]:
+                    continue
+                
+                print(f"Creating OME-TIFF for {well_name}_Field{field_num}")
+                
+                # Create 4D array: TCYX (time, channel, y, x)
+                well_field_data = np.zeros((len(timepoints), len(channels), height, width), dtype=dtype)
+                
+                # Fill the array with actual data
+                for channel_idx, channel in enumerate(channels):
+                    if channel in organized_data[well_name][field_num]:
+                        channel_data = organized_data[well_name][field_num][channel]
+                        
+                        # Sort by timepoint
+                        channel_data.sort(key=lambda x: x['timepoint'])
+                        
+                        for time_idx, time_data in enumerate(channel_data):
+                            if time_idx < len(timepoints):
+                                well_field_data[time_idx, channel_idx] = time_data['data']
+                
+                # Create filename: WellName_Field{X}.ome.tif
+                output_filename = f"{well_name}_Field{field_num}.ome.tif"
+                output_path = well_field_dir / output_filename
+                
+                # Create metadata for this well/field
+                metadata = {
+                    'axes': 'TCYX',  # Time, Channel, Y, X
+                    'SignificantBits': 16,
+                    'PhysicalSizeX': pixel_size_um,
+                    'PhysicalSizeXUnit': 'µm',
+                    'PhysicalSizeY': pixel_size_um,
+                    'PhysicalSizeYUnit': 'µm',
+                    'TimeIncrement': 1.0,  # Adjust based on your time intervals
+                    'TimeIncrementUnit': 'h',
+                    'Channel': {
+                        'Name': [self.get_channel_name(ch) for ch in channels],
+                        'SamplesPerPixel': [1] * len(channels)
+                    },
+                    'Description': f'Incucyte {well_name} Field {field_num} - {len(timepoints)} timepoints, {len(channels)} channels',
+                    'Name': f'{well_name}_Field{field_num}',
+                    'Well': {
+                        'Name': well_name,
+                        'Row': ord(well_name[0]) - ord('A'),
+                        'Column': int(well_name[1:]) - 1
+                    },
+                    'Field': field_num
+                }
+                
+                print(f"  Writing {output_filename}: {well_field_data.shape} (T={len(timepoints)}, C={len(channels)}, Y={height}, X={width})")
+                
+                # Write the OME-TIFF file
+                tifffile.imwrite(
+                    str(output_path),
+                    well_field_data,
+                    bigtiff=True,
+                    photometric='minisblack',
+                    compression='lzw',  # Use compression to save space
+                    predictor=True,     # Improve compression
+                    tile=(256, 256),    # Use tiling for better performance
+                    metadata=metadata,
+                    resolution=(10000.0/pixel_size_um, 10000.0/pixel_size_um),  # Convert to pixels per cm
+                    resolutionunit='CENTIMETER'
+                )
+                
+                created_files.append({
+                    'file': output_path,
+                    'well': well_name,
+                    'field': field_num,
+                    'shape': well_field_data.shape,
+                    'channels': len(channels),
+                    'timepoints': len(timepoints)
+                })
+                
+                print(f"  ✓ Created: {output_filename}")
+        
+        print(f"\n✓ Successfully created {len(created_files)} OME-TIFF files in: {well_field_dir}")
+        print(f"  Files contain: {len(timepoints)} timepoints × {len(channels)} channels × {height}×{width} pixels")
+        
+        # Print summary of created files
+        print("\nCreated files:")
+        for file_info in created_files:
+            print(f"  {file_info['file'].name} - {file_info['well']} Field {file_info['field']} - {file_info['timepoints']}T × {file_info['channels']}C")
+        
+        return created_files
+
 
 def main():
     """Main function"""
@@ -802,6 +1346,21 @@ def main():
         action="store_true",
         help="Skip TIFF conversion, only create companion",
     )
+    parser.add_argument(
+        "--single-ome-tiff",
+        action="store_true",
+        help="Create single OME-TIFF with plate structure instead of companion file",
+    )
+    parser.add_argument(
+        "--simple-format",
+        action="store_true",
+        help="Use simpler 5D array format (use with --single-ome-tiff)",
+    )
+    parser.add_argument(
+        "--well-field-ome-tiffs",
+        action="store_true",
+        help="Create separate OME-TIFF files per well and field combination",
+    )
 
     args = parser.parse_args()
 
@@ -812,22 +1371,48 @@ def main():
     try:
         converter = IncucyteConverter(args.input_dir, args.output_dir)
 
-        if not args.skip_conversion:
-            print("Starting TIFF conversion...")
-            converted_files = converter.convert_tiffs_with_tifffile()
-            print(f"Converted {len(converted_files)} files")
+        if args.well_field_ome_tiffs:
+            print("Creating separate OME-TIFF files per well and field...")
+            result = converter.convert_to_well_field_ome_tiffs()
+            
+            if result:
+                print(f"✓ Created {len(result)} OME-TIFF files successfully")
+            else:
+                print("✗ Failed to create well-field OME-TIFF files")
+                
+        elif args.single_ome_tiff:
+            print("Creating single OME-TIFF with plate structure...")
+            if args.simple_format:
+                result = converter.convert_to_single_ome_tiff_simple()
+            else:
+                result = converter.convert_to_single_ome_tiff()
+            
+            if result:
+                print(f"✓ Single OME-TIFF created successfully: {result}")
+            else:
+                print("✗ Failed to create single OME-TIFF")
+                
         else:
-            print("Skipping conversion, looking for existing converted files...")
-            converted_files = converter.find_converted_files()
-            print(f"Found {len(converted_files)} converted files")
+            # Original multi-file approach
+            if not args.skip_conversion:
+                print("Starting TIFF conversion...")
+                converted_files = converter.convert_tiffs_with_tifffile()
+                print(f"Converted {len(converted_files)} files")
+            else:
+                print("Skipping conversion, looking for existing converted files...")
+                converted_files = converter.find_converted_files()
+                print(f"Found {len(converted_files)} converted files")
 
-        if converted_files:
-            # Save companion file at the same level as the converted folder, not inside it
-            companion_path = converter.base_path / args.companion
-            converter.create_companion_for_converted(converted_files, companion_path)
-            print("Conversion and companion file generation completed!")
-        else:
-            print("No files to process")
+            if converted_files:
+                # Test UUID embedding
+                converter.test_uuid_embedding()
+                
+                # Save companion file at the same level as the converted folder, not inside it
+                companion_path = converter.base_path / args.companion
+                converter.create_companion_for_converted(converted_files, companion_path)
+                print("Conversion and companion file generation completed!")
+            else:
+                print("No files to process")
 
     except Exception as e:
         print(f"Error: {e}")
