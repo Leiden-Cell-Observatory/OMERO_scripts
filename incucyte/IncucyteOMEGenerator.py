@@ -23,17 +23,18 @@ Requires: pip install tifffile
 import os
 import re
 import sys
-import uuid
+import uuid as uuid_module
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import defaultdict
+import tifffile
+import argparse
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
-# OME companion file constants
-OME_ATTRIBUTES = {
+# OME companion file constants - master UUID will be set dynamically
+OME_ATTRIBUTES_TEMPLATE = {
     "Creator": "incucyte_ome_generator %s" % __version__,
-    "UUID": "urn:uuid:%s" % uuid.uuid4(),
     "xmlns": "http://www.openmicroscopy.org/Schemas/OME/2016-06",
     "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
     "xsi:schemaLocation": "http://www.openmicroscopy.org/Schemas/OME/2016-06 \
@@ -89,9 +90,13 @@ class Plane(object):
 class UUID(object):
     """OME UUID object"""
 
-    def __init__(self, filename=None):
+    def __init__(self, filename=None, uuid_value=None):
         self.data = {"FileName": filename}
-        self.value = "urn:uuid:%s" % str(uuid.uuid4())
+        # Use provided UUID or generate new one
+        if uuid_value:
+            self.value = uuid_value
+        else:
+            self.value = "urn:uuid:%s" % str(uuid_module.uuid4())
 
 
 class TiffData(object):
@@ -166,8 +171,8 @@ class Image(object):
             Channel(self, name=name, color=color, samplesPerPixel=samplesPerPixel)
         )
 
-    def add_tiff(self, filename, c=0, t=0, z=0, ifd=None, planeCount=None):
-        """Add a TIFF file reference to the image"""
+    def add_tiff(self, filename, c=0, t=0, z=0, ifd=None, planeCount=None, uuid_value=None):
+        """Add a TIFF file reference to the image with optional UUID"""
         self.data["TIFFs"].append(
             TiffData(
                 firstC=c,
@@ -175,7 +180,7 @@ class Image(object):
                 firstZ=z,
                 ifd=ifd,
                 planeCount=planeCount,
-                uuid=UUID(filename),
+                uuid=UUID(filename, uuid_value=uuid_value),
             )
         )
 
@@ -255,9 +260,17 @@ class WellSample(object):
         WellSample.ID += 1
 
 
-def create_companion(plates=[], images=[], out=None):
-    """Create a companion OME-XML for a given experiment"""
-    root = ET.Element("OME", attrib=OME_ATTRIBUTES)
+def create_companion(plates=[], images=[], out=None, master_uuid=None):
+    """Create a companion OME-XML for a given experiment with proper UUID"""
+    # Generate master UUID if not provided
+    if not master_uuid:
+        master_uuid = "urn:uuid:%s" % str(uuid_module.uuid4())
+    
+    # Create OME attributes with the master UUID
+    ome_attributes = OME_ATTRIBUTES_TEMPLATE.copy()
+    ome_attributes["UUID"] = master_uuid
+    
+    root = ET.Element("OME", attrib=ome_attributes)
 
     for plate in plates:
         p = ET.SubElement(root, "Plate", attrib=plate.data["Plate"])
@@ -298,6 +311,8 @@ def create_companion(plates=[], images=[], out=None):
         out.write(xml_str)
     else:
         ET.ElementTree(root).write(out, encoding="UTF-8", xml_declaration=True)
+    
+    return master_uuid
 
 
 class IncucyteConverter:
@@ -318,6 +333,9 @@ class IncucyteConverter:
             Path(output_dir) if output_dir else self.base_path / "converted"
         )
         self.output_dir.mkdir(exist_ok=True)
+        # Store UUID mappings
+        self.file_uuids = {}
+        self.master_uuid = None
 
     def scan_structure(self):
         """Scan the Incucyte export directory structure"""
@@ -425,11 +443,14 @@ class IncucyteConverter:
         return mapping.get(channel_code, channel_code)
 
     def convert_tiffs_with_tifffile(self):
-        """Convert pyramid TIFFs to single-plane TIFFs using tifffile"""
+        """Convert pyramid TIFFs to single-plane TIFFs using tifffile with UUID support"""
         structure = self.scan_structure()
         converted_files = []
 
         print("Converting pyramid TIFFs to single-plane TIFFs using tifffile...")
+        
+        # Generate master UUID for companion file
+        self.master_uuid = "urn:uuid:%s" % str(uuid_module.uuid4())
 
         # Create organized output structure
         for timepoint in structure["timepoints"]:
@@ -442,9 +463,15 @@ class IncucyteConverter:
                     # Output filename with .ome.tif extension
                     output_name = f"{well}_F{field:02d}_{channel}_T{timepoint['timestamp']}.ome.tif"
                     output_path = timepoint_dir / output_name
+                    
+                    # Generate UUID for this file
+                    file_uuid = "urn:uuid:%s" % str(uuid_module.uuid4())
+                    # Use forward slashes for OME compatibility
+                    relative_path = str(output_path.relative_to(self.output_dir.parent)).replace("\\", "/")
+                    self.file_uuids[relative_path] = file_uuid
 
-                    # Convert using tifffile
-                    if self.convert_single_tiff(tiff_file, output_path):
+                    # Convert using tifffile with UUID support
+                    if self.convert_single_tiff_with_uuid(tiff_file, output_path, file_uuid):
                         converted_files.append(
                             {
                                 "original": tiff_file,
@@ -453,15 +480,21 @@ class IncucyteConverter:
                                 "field": field,
                                 "channel": channel,
                                 "timepoint": timepoint,
+                                "uuid": file_uuid,
                             }
                         )
 
         return converted_files
 
     def convert_single_tiff(self, input_path, output_path):
-        """Convert a single TIFF file using tifffile to extract full resolution image"""
+        """Convert a single TIFF file using tifffile to extract full resolution image (legacy)"""
+        # This method is kept for backward compatibility but not used with UUID support
+        return self.convert_single_tiff_with_uuid(input_path, output_path, None)
+    
+    def convert_single_tiff_with_uuid(self, input_path, output_path, file_uuid):
+        """Convert a single TIFF file with proper UUID embedding"""
         try:
-            import tifffile
+            
 
             # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -488,23 +521,30 @@ class IncucyteConverter:
                     )
                     print(f"  Image range: {image_data.min()} - {image_data.max()}")
 
-                    # Create minimal OME-XML metadata for single plane
-                    ome_xml = self.create_minimal_ome_xml(
-                        image_data.shape, image_data.dtype
-                    )
+                    # Create minimal OME-XML with BinaryOnly element for multi-file dataset
+                    if file_uuid:
+                        minimal_ome = self.create_minimal_ome_xml_with_uuid(file_uuid)
+                    else:
+                        # Fallback to regular OME-XML if no UUID provided
+                        minimal_ome = self.create_minimal_ome_xml(
+                            image_data.shape, image_data.dtype
+                        )
 
-                    # Save as OME-TIFF with embedded metadata
+                    # Save as OME-TIFF with embedded UUID metadata
                     tifffile.imwrite(
                         str(output_path),
                         image_data,
-                        imagej=True,
+                        imagej=False,  # Don't use ImageJ format for proper OME-TIFF
                         photometric="minisblack"
                         if len(image_data.shape) == 2
                         else "rgb",
-                        description=ome_xml,
+                        description=minimal_ome,  # Embed the minimal OME-XML
                     )
 
-                    print(f"✓ Converted successfully")
+                    if file_uuid:
+                        print(f"✓ Converted successfully with UUID: {file_uuid[:50]}...")
+                    else:
+                        print(f"✓ Converted successfully")
                     return True
                 else:
                     print(f"✗ No pages found in TIFF file")
@@ -518,10 +558,26 @@ class IncucyteConverter:
         except Exception as e:
             print(f"Exception during conversion of {input_path.name}: {e}")
             return False
+    
+    def create_minimal_ome_xml_with_uuid(self, file_uuid):
+        """Create minimal OME-XML with BinaryOnly element referencing companion file"""
+        minimal_ome = f'''<?xml version="1.0" encoding="UTF-8"?>
+<OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:schemaLocation="http://www.openmicroscopy.org/Schemas/OME/2016-06
+     http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd"
+     UUID="{file_uuid}">
+   <BinaryOnly MetadataFile="companion.companion.ome" UUID="{self.master_uuid}"/>
+</OME>'''
+        return minimal_ome
 
     def find_converted_files(self):
         """Find already converted files in output directory"""
         converted_files = []
+        
+        # Generate master UUID if not already set
+        if not self.master_uuid:
+            self.master_uuid = "urn:uuid:%s" % str(uuid_module.uuid4())
 
         for timepoint_dir in self.output_dir.iterdir():
             if not timepoint_dir.is_dir():
@@ -537,6 +593,12 @@ class IncucyteConverter:
                     well = match.group(1)
                     field = int(match.group(2))
                     channel = match.group(3)
+                    
+                    # Use forward slashes for OME compatibility
+                    relative_path = str(tiff_file.relative_to(self.output_dir.parent)).replace("\\", "/")
+                    # Get or create UUID for existing file
+                    if relative_path not in self.file_uuids:
+                        self.file_uuids[relative_path] = "urn:uuid:%s" % str(uuid_module.uuid4())
 
                     converted_files.append(
                         {
@@ -545,13 +607,14 @@ class IncucyteConverter:
                             "field": field,
                             "channel": channel,
                             "timepoint": {"timestamp": timestamp},
+                            "uuid": self.file_uuids[relative_path],
                         }
                     )
 
         return converted_files
 
     def create_companion_for_converted(self, converted_files, output_file=None):
-        """Create OME companion file for converted TIFFs"""
+        """Create OME companion file for converted TIFFs with proper UUID references"""
         if not converted_files:
             raise ValueError("No converted files found")
 
@@ -601,13 +664,14 @@ class IncucyteConverter:
                     images.append(image)
                     well.add_wellsample(field_num - 1, image)
 
-        # Generate companion file
+        # Generate companion file with master UUID
         if output_file:
             with open(output_file, "w", encoding="utf-8") as f:
-                create_companion(plates=[plate], images=images, out=f)
+                master_uuid = create_companion(plates=[plate], images=images, out=f, master_uuid=self.master_uuid)
             print(f"OME companion file written to: {output_file}")
+            print(f"Master UUID: {master_uuid}")
         else:
-            create_companion(plates=[plate], images=images)
+            create_companion(plates=[plate], images=images, master_uuid=self.master_uuid)
 
         return [plate], images
 
@@ -646,19 +710,23 @@ class IncucyteConverter:
             image.add_channel(name=channel_name)
             print(f"  Added channel: {channel} -> {channel_name}")
 
-        # Add TIFF references
+        # Add TIFF references with UUIDs
         for file_info in files:
             c_idx = all_channels.index(file_info["channel"])
             t_idx = all_timepoints.index(file_info["timepoint"]["timestamp"])
 
             # Relative path from output directory's parent - use forward slashes for OME compatibility
             relative_path = str(
-                file_info["converted"].relative_to(self.output_dir.parent)
+            file_info["converted"].relative_to(self.output_dir.parent)
             )
             # Convert Windows backslashes to forward slashes for OME compatibility
             relative_path = relative_path.replace("\\", "/")
-            print(f"  Adding TIFF: {relative_path} -> C={c_idx}, T={t_idx}, Z=0")
-            image.add_tiff(relative_path, c=c_idx, t=t_idx, z=0, ifd=0, planeCount=1)
+            
+            # Get UUID for this file
+            uuid_value = file_info.get("uuid") or self.file_uuids.get(relative_path)
+        
+            print(f"  Adding TIFF: {relative_path} -> C={c_idx}, T={t_idx}, Z=0, UUID={uuid_value[:50] if uuid_value else 'None'}...")
+            image.add_tiff(relative_path, c=c_idx, t=t_idx, z=0, ifd=0, planeCount=1, uuid_value=uuid_value)
 
         return image
 
@@ -701,7 +769,6 @@ class IncucyteConverter:
     def get_tiff_dimensions(self, tiff_path):
         """Get dimensions from a TIFF file"""
         try:
-            import tifffile
 
             with tifffile.TiffFile(str(tiff_path)) as tif:
                 page = tif.pages[0]
@@ -716,7 +783,6 @@ class IncucyteConverter:
 
 def main():
     """Main function"""
-    import argparse
 
     parser = argparse.ArgumentParser(
         description="Convert Incucyte TIFFs and generate OME companion file"

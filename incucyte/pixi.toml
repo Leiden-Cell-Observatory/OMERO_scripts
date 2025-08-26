@@ -1,0 +1,17 @@
+[project]
+authors = ["Maarten Paul <maarten.paul@gmail.com>"]
+channels = ["conda-forge"]
+name = "incucyte"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = "3.11.*"
+tifffile = ">=2025.6.11,<2026"
+dask = ">=2025.7.0,<2026"
+numpy = ">=2.3.2,<3"
+
+[pypi-dependencies]
+ngff-zarr = ">=0.16.1, <0.17"
