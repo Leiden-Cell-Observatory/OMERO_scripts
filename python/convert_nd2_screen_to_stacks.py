@@ -17,6 +17,7 @@ import argparse
 # Version 2024-04-17: Modified --max-projection to only save maximum intensity projections
 # Version 2024-04-17: Added file-prefix option for custom file naming (e.g., 250314_PDLO_FUCCI_day7fixed_)
 # Version 2025-11-14: Improved guessing of missing position names with numbering
+# Version 2025-11-14: Added support for time series data
 #
 
 def guess_missing_position_names(f):
@@ -99,6 +100,7 @@ def convert_nd2_to_tiff_by_well_stack(
     skip_ome=False, 
     separate_channels=False,
     separate_z=False,
+    separate_t=False,
     guess_names=False,
     max_projection=False,
     export_folder=None,
@@ -112,6 +114,7 @@ def convert_nd2_to_tiff_by_well_stack(
         skip_ome (bool): If True, skip generation of OME metadata
         separate_channels (bool): If True, save each channel as a separate file
         separate_z (bool): If True, save each z-slice as a separate file
+        separate_t (bool): If True, save each time point as a separate file
         guess_names (bool): If True, attempt to guess missing position names
         max_projection (bool): If True, create maximum intensity projections only
         export_folder (str): Custom export folder path (default is "export" subfolder)
@@ -136,7 +139,7 @@ def convert_nd2_to_tiff_by_well_stack(
     print(f"Processing file: {input_path.name}")
     print(f"Output directory: {output_dir}")
     print(f"Options: skip_ome={skip_ome}, separate_channels={separate_channels}, "
-          f"separate_z={separate_z}, guess_names={guess_names}, max_projection={max_projection}")
+          f"separate_z={separate_z}, separate_t={separate_t}, guess_names={guess_names}, max_projection={max_projection}")
     
     if file_prefix:
         print(f"Using file prefix: {file_prefix}")
@@ -154,10 +157,16 @@ def convert_nd2_to_tiff_by_well_stack(
         num_positions = f.sizes[AXIS.POSITION]
         num_z = f.sizes.get(AXIS.Z, 1)
         num_channels = f.sizes.get(AXIS.CHANNEL, 1)
+        num_time = f.sizes.get(AXIS.TIME, 1)
+        has_time = num_time > 1
 
         print(f"Number of positions: {num_positions}")
+        print(f"Number of time points: {num_time}")
         print(f"Number of z-slices per position: {num_z}")
         print(f"Number of channels: {num_channels}")
+        
+        if has_time:
+            print(f"Time series detected - will create one OME-TIFF per position with all {num_time} time points")
 
         # Get physical pixel size for resolution information
         voxel_size = f.voxel_size()
@@ -227,13 +236,17 @@ def convert_nd2_to_tiff_by_well_stack(
                         print(f"Falling back to default position name: {position_name}")
 
             # Handle duplicate position names by adding sequential numbering
-            if position_name in position_name_counts:
-                position_name_counts[position_name] += 1
-                numbered_position_name = f"{position_name}_{position_name_counts[position_name]:04d}"
-                print(f"Duplicate position name detected. Using: {numbered_position_name}")
+            # Skip this if guess_names is enabled since it already includes numbering
+            if guess_names and position_name_map:
+                numbered_position_name = position_name
             else:
-                position_name_counts[position_name] = 1
-                numbered_position_name = f"{position_name}_{position_name_counts[position_name]:04d}"
+                if position_name in position_name_counts:
+                    position_name_counts[position_name] += 1
+                    numbered_position_name = f"{position_name}_{position_name_counts[position_name]:04d}"
+                    print(f"Duplicate position name detected. Using: {numbered_position_name}")
+                else:
+                    position_name_counts[position_name] = 1
+                    numbered_position_name = f"{position_name}_{position_name_counts[position_name]:04d}"
 
             # Generate base output filename
             base_name = input_path.stem
@@ -241,28 +254,58 @@ def convert_nd2_to_tiff_by_well_stack(
             # Create a function to fetch frames for this position
             # Use local frame_indices to avoid scope issues
             def get_position_frames(pos_idx, frame_indices_local):
-                frames = []
-                for z in range(num_z):
-                    # Find the frame number for this position and z-slice
-                    pos_z_frame_indices = [
-                        (frame_num, idx)
-                        for frame_num, idx in enumerate(frame_indices_local)
-                        if idx.get(AXIS.POSITION, 0) == pos_idx
-                        and idx.get(AXIS.Z, 0) == z
-                    ]
+                if has_time:
+                    # For time series data: (T, Z, C, Y, X)
+                    frames = []
+                    for t in range(num_time):
+                        z_slices = []
+                        for z in range(num_z):
+                            # Find the frame number for this position, time, and z-slice
+                            pos_t_z_frame_indices = [
+                                (frame_num, idx)
+                                for frame_num, idx in enumerate(frame_indices_local)
+                                if idx.get(AXIS.POSITION, 0) == pos_idx
+                                and idx.get(AXIS.TIME, 0) == t
+                                and idx.get(AXIS.Z, 0) == z
+                            ]
 
-                    if not pos_z_frame_indices:
-                        print(
-                            f"Warning: No frame found for position {pos_idx}, z-slice {z}"
-                        )
-                        # Use zeros for missing frames
-                        frames.append(
-                            np.zeros((num_channels, 512, 512), dtype=np.uint16)
-                        )
-                    else:
-                        frame_num, _ = pos_z_frame_indices[0]
-                        frames.append(f.read_frame(frame_num))
-                return np.stack(frames, axis=0)
+                            if not pos_t_z_frame_indices:
+                                print(
+                                    f"Warning: No frame found for position {pos_idx}, time {t}, z-slice {z}"
+                                )
+                                # Use zeros for missing frames
+                                z_slices.append(
+                                    np.zeros((num_channels, 512, 512), dtype=np.uint16)
+                                )
+                            else:
+                                frame_num, _ = pos_t_z_frame_indices[0]
+                                z_slices.append(f.read_frame(frame_num))
+                        frames.append(np.stack(z_slices, axis=0))
+                    return np.stack(frames, axis=0)  # Shape: (T, Z, C, Y, X)
+                else:
+                    # Original code for non-time series data: (Z, C, Y, X)
+                    frames = []
+                    for z in range(num_z):
+                        # Find the frame number for this position and z-slice
+                        pos_z_frame_indices = [
+                            (frame_num, idx)
+                            for frame_num, idx in enumerate(frame_indices_local)
+                            if idx.get(AXIS.POSITION, 0) == pos_idx
+                            and idx.get(AXIS.Z, 0) == z
+                        ]
+
+                        if not pos_z_frame_indices:
+                            print(
+                                f"Warning: No frame found for position {pos_idx}, z-slice {z}"
+                            )
+                            # Use zeros for missing frames
+                            frames.append(
+                                np.zeros((num_channels, 512, 512), dtype=np.uint16)
+                            )
+                        else:
+                            frame_num, _ = pos_z_frame_indices[0]
+                            frames.append(f.read_frame(frame_num))
+                    return np.stack(frames, axis=0)  # Shape: (Z, C, Y, X)
 
             # Get all frames for this position, passing frame_indices to avoid scope issues
             position_data = get_position_frames(pos_idx, frame_indices)
@@ -306,7 +349,26 @@ def convert_nd2_to_tiff_by_well_stack(
             # Save the data based on the requested options
             # Skip saving regular files if max_projection is True
             if not max_projection:
-                if separate_channels and separate_z:
+                if has_time:
+                    # For time series data, only save the full stack (no separate channels/z-slices)
+                    if file_prefix:
+                        output_filename = f"{file_prefix}{position_name}.ome.tif"
+                    else:
+                        output_filename = f"{base_output_filename}.ome.tif"
+                    
+                    output_path = output_dir / output_filename
+                    print(f"Saving time series to: {output_path}")
+                    
+                    # Data is already in TZCYX format
+                    # Save with full OME metadata
+                    tifffile.imwrite(
+                        output_path,
+                        position_data,
+                        metadata={"axes": "TZCYX"} if not skip_ome else None,
+                        description=ome_xml,
+                        **common_imwrite_params
+                    )
+                elif separate_channels and separate_z:
                     # Save each channel and z-slice separately
                     for c in range(num_channels):
                         for z in range(num_z):
@@ -404,51 +466,78 @@ def convert_nd2_to_tiff_by_well_stack(
             
             # Create and save maximum intensity projections if requested and we have multiple Z slices
             if max_projection and num_z > 1:
-                # Create maximum intensity projection along the Z axis (axis 0)
-                max_proj_data = np.max(position_data, axis=0)
-                
-                if separate_channels:
-                    # Save separate max projection for each channel
-                    for c in range(num_channels):
-                        # Apply custom prefix if provided, otherwise use the base filename
-                        if file_prefix:
-                            proj_filename = f"{file_prefix}{position_name}_ch{c+1}.tif"
-                        else:
-                            proj_filename = f"{base_output_filename}_ch{c+1}_max.tif"
-                        
-                        proj_path = output_dir / proj_filename
-                        print(f"Saving max projection to: {proj_path}")
-                        
-                        # Extract the channel from max projection
-                        channel_proj = max_proj_data[c]
-                        
-                        # Save without OME metadata
-                        tifffile.imwrite(
-                            proj_path,
-                            channel_proj,
-                            **common_imwrite_params
-                        )
-                else:
-                    # Save all channels in one max projection file
+                if has_time:
+                    # For time series: create max projection along Z for each time point
+                    # Input shape: (T, Z, C, Y, X) -> Output shape: (T, C, Y, X)
+                    max_proj_data = np.max(position_data, axis=1)
+                    
+                    # Save with time dimension
                     if file_prefix:
                         proj_filename = f"{file_prefix}{position_name}.ome.tif"
                     else:
                         proj_filename = f"{base_output_filename}_max.ome.tif"
                     
                     proj_path = output_dir / proj_filename
-                    print(f"Saving max projection to: {proj_path}")
+                    print(f"Saving time series max projection to: {proj_path}")
                     
-                    # Add time and Z dimensions for 5D TZCYX format (Z is 1)
-                    max_proj_with_tz = np.expand_dims(np.expand_dims(max_proj_data, axis=0), axis=0)
+                    # Add Z dimension (size 1) for TZCYX format
+                    max_proj_with_z = np.expand_dims(max_proj_data, axis=1)
                     
                     # Save with modified metadata
                     tifffile.imwrite(
                         proj_path,
-                        max_proj_with_tz,
+                        max_proj_with_z,
                         metadata={"axes": "TZCYX"} if not skip_ome else None,
                         description=ome_xml,
                         **common_imwrite_params
                     )
+                else:
+                    # Original code for non-time series data
+                    # Create maximum intensity projection along the Z axis (axis 0)
+                    max_proj_data = np.max(position_data, axis=0)
+                    
+                    if separate_channels:
+                        # Save separate max projection for each channel
+                        for c in range(num_channels):
+                            # Apply custom prefix if provided, otherwise use the base filename
+                            if file_prefix:
+                                proj_filename = f"{file_prefix}{position_name}_ch{c+1}.tif"
+                            else:
+                                proj_filename = f"{base_output_filename}_ch{c+1}_max.tif"
+                            
+                            proj_path = output_dir / proj_filename
+                            print(f"Saving max projection to: {proj_path}")
+                            
+                            # Extract the channel from max projection
+                            channel_proj = max_proj_data[c]
+                            
+                            # Save without OME metadata
+                            tifffile.imwrite(
+                                proj_path,
+                                channel_proj,
+                                **common_imwrite_params
+                            )
+                    else:
+                        # Save all channels in one max projection file
+                        if file_prefix:
+                            proj_filename = f"{file_prefix}{position_name}.ome.tif"
+                        else:
+                            proj_filename = f"{base_output_filename}_max.ome.tif"
+                        
+                        proj_path = output_dir / proj_filename
+                        print(f"Saving max projection to: {proj_path}")
+                        
+                        # Add time and Z dimensions for 5D TZCYX format (Z is 1)
+                        max_proj_with_tz = np.expand_dims(np.expand_dims(max_proj_data, axis=0), axis=0)
+                        
+                        # Save with modified metadata
+                        tifffile.imwrite(
+                            proj_path,
+                            max_proj_with_tz,
+                            metadata={"axes": "TZCYX"} if not skip_ome else None,
+                            description=ome_xml,
+                            **common_imwrite_params
+                        )
 
     print(f"Completed processing {num_positions} positions")
 
