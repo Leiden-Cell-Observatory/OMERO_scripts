@@ -16,7 +16,7 @@ import argparse
 # Version 2024-04-17: Added export-folder argument for custom output location
 # Version 2024-04-17: Modified --max-projection to only save maximum intensity projections
 # Version 2024-04-17: Added file-prefix option for custom file naming (e.g., 250314_PDLO_FUCCI_day7fixed_)
-#
+# Version 2025-11-14: Improved guessing of missing position names with numbering
 #
 
 def guess_missing_position_names(f):
@@ -177,6 +177,9 @@ def convert_nd2_to_tiff_by_well_stack(
         # Get all frame indices once
         frame_indices = list(f.loop_indices)
 
+        # Track position name counts to handle duplicates
+        position_name_counts = {}
+
         # Process each position (well stack)
         for pos_idx in range(num_positions):
             # Get position name based on the method
@@ -223,10 +226,18 @@ def convert_nd2_to_tiff_by_well_stack(
                         position_name = f"Pos{pos_idx+1}"
                         print(f"Falling back to default position name: {position_name}")
 
+            # Handle duplicate position names by adding sequential numbering
+            if position_name in position_name_counts:
+                position_name_counts[position_name] += 1
+                numbered_position_name = f"{position_name}_{position_name_counts[position_name]:04d}"
+                print(f"Duplicate position name detected. Using: {numbered_position_name}")
+            else:
+                position_name_counts[position_name] = 1
+                numbered_position_name = f"{position_name}_{position_name_counts[position_name]:04d}"
+
             # Generate base output filename
             base_name = input_path.stem
-            base_output_filename = f"{base_name}_{position_name}"
-
+            base_output_filename = f"{base_name}_{numbered_position_name}"
             # Create a function to fetch frames for this position
             # Use local frame_indices to avoid scope issues
             def get_position_frames(pos_idx, frame_indices_local):
