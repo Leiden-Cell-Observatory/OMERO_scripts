@@ -166,7 +166,10 @@ def convert_nd2_to_tiff_by_well_stack(
         print(f"Number of channels: {num_channels}")
         
         if has_time:
-            print(f"Time series detected - will create one OME-TIFF per position with all {num_time} time points")
+            if separate_t:
+                print(f"Time series detected - will create separate OME-TIFF files for each of {num_time} time points per position")
+            else:
+                print(f"Time series detected - will create one OME-TIFF per position with all {num_time} time points")
 
         # Get physical pixel size for resolution information
         voxel_size = f.voxel_size()
@@ -349,7 +352,32 @@ def convert_nd2_to_tiff_by_well_stack(
             # Save the data based on the requested options
             # Skip saving regular files if max_projection is True
             if not max_projection:
-                if has_time:
+                if has_time and separate_t:
+                    # Save each time point separately
+                    for t in range(num_time):
+                        if file_prefix:
+                            output_filename = f"{file_prefix}{position_name}_t{t+1:03d}.ome.tif"
+                        else:
+                            output_filename = f"{base_output_filename}_t{t+1:03d}.ome.tif"
+                        
+                        output_path = output_dir / output_filename
+                        print(f"Saving time point {t+1} to: {output_path}")
+                        
+                        # Extract single time point: (Z, C, Y, X)
+                        time_data = position_data[t]
+                        
+                        # Add time dimension for 5D TZCYX format (T is 1)
+                        time_data_with_t = np.expand_dims(time_data, axis=0)
+                        
+                        # Save with modified metadata
+                        tifffile.imwrite(
+                            output_path,
+                            time_data_with_t,
+                            metadata={"axes": "TZCYX"} if not skip_ome else None,
+                            description=ome_xml,
+                            **common_imwrite_params
+                        )
+                elif has_time:
                     # For time series data, only save the full stack (no separate channels/z-slices)
                     if file_prefix:
                         output_filename = f"{file_prefix}{position_name}.ome.tif"
@@ -549,6 +577,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip-ome", action="store_true", help="Skip generation of OME metadata")
     parser.add_argument("--separate-channels", action="store_true", help="Save each channel as a separate file")
     parser.add_argument("--separate-z", action="store_true", help="Save each z-slice as a separate file")
+    parser.add_argument("--separate-t", action="store_true", help="Save each time point as a separate file")
     parser.add_argument("--guess-names", action="store_true", 
                        help="Attempt to guess missing position names by assuming sequential frames belong to the same well")
     parser.add_argument("--max-projection", action="store_true",
@@ -577,6 +606,7 @@ if __name__ == "__main__":
             skip_ome=args.skip_ome,
             separate_channels=args.separate_channels,
             separate_z=args.separate_z,
+            separate_t=args.separate_t,
             guess_names=args.guess_names,
             max_projection=args.max_projection,
             export_folder=args.export_folder,
