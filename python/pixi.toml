@@ -25,6 +25,7 @@ omero-py = ">=5.21.0,<6"
 # Python packages from PyPI
 ezomero = ">=3.2.1, <4"
 omero-cli-zarr = ">=0.6.1, <0.7"
+nd2 = ">=0.10.4, <0.11"
 
 # A feature for users who want to use JupyterLab.
 [feature.jupyter]

@@ -494,7 +494,33 @@ def convert_nd2_to_tiff_by_well_stack(
             
             # Create and save maximum intensity projections if requested and we have multiple Z slices
             if max_projection and num_z > 1:
-                if has_time:
+                if has_time and separate_t:
+                    # For time series with separate_t: save each time point's max projection separately
+                    # Input shape: (T, Z, C, Y, X) -> Output shape per file: (1, 1, C, Y, X)
+                    max_proj_data = np.max(position_data, axis=1)  # Shape: (T, C, Y, X)
+                    
+                    for t in range(num_time):
+                        if file_prefix:
+                            proj_filename = f"{file_prefix}{position_name}_t{t+1:03d}.ome.tif"
+                        else:
+                            proj_filename = f"{base_output_filename}_t{t+1:03d}_max.ome.tif"
+                        
+                        proj_path = output_dir / proj_filename
+                        print(f"Saving max projection for time point {t+1} to: {proj_path}")
+                        
+                        # Extract single time point and add T and Z dimensions for TZCYX format
+                        time_proj = max_proj_data[t]  # Shape: (C, Y, X)
+                        time_proj_with_tz = np.expand_dims(np.expand_dims(time_proj, axis=0), axis=0)
+                        
+                        # Save with modified metadata
+                        tifffile.imwrite(
+                            proj_path,
+                            time_proj_with_tz,
+                            metadata={"axes": "TZCYX"} if not skip_ome else None,
+                            description=ome_xml,
+                            **common_imwrite_params
+                        )
+                elif has_time:
                     # For time series: create max projection along Z for each time point
                     # Input shape: (T, Z, C, Y, X) -> Output shape: (T, C, Y, X)
                     max_proj_data = np.max(position_data, axis=1)
