@@ -61,9 +61,10 @@ launch_gui.bat
 
 At the top of the window, you can customize the interface:
 - **Appearance**: Choose between System (follows OS theme), Dark, or Light mode
-- **UI Scale**: Adjust the interface size from 80% to 150% for optimal viewing on different displays
-  - **Default**: 120% for better readability on most displays
-  - The GUI starts with a larger window (1100x900) for comfortable viewing
+- **UI Scale**: Adjust the interface size from 80% to 200% for optimal viewing on different displays
+  - **Default**: 150% for crisp, highly readable text on all platforms
+  - Higher scaling (160-200%) recommended for 4K displays or visually impaired users
+  - The GUI starts with a larger window (1200x950) and aggressive scaling for maximum clarity
 
 ### Converting Files
 
@@ -157,10 +158,13 @@ The GUI supports various customization options:
   - **Light**: Traditional light theme with high contrast
 
 - **UI Scaling**: Perfect for:
-  - High-DPI displays (use 120-150%)
-  - Low-resolution screens (use 80-90%)
-  - Accessibility needs (larger text and controls)
-  - Multi-monitor setups with different resolutions
+  - **Standard displays**: Use default 150% for crisp, readable interface
+  - **High-DPI/4K displays**: Use 160-200% for maximum clarity
+  - **Lower resolution screens**: Use 100-120% if interface feels too large
+  - **Accessibility needs**: Use 175-200% for very large text and controls
+  - **Multi-monitor setups**: Adjust per display characteristics
+
+  The default 150% scaling ensures excellent readability on Windows, macOS, and Linux without requiring manual adjustment.
 
 ## Support
 

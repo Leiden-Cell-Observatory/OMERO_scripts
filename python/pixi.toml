@@ -15,10 +15,6 @@ omero = "omero"
 # This makes it easy to run with a single command: `pixi run jupyter`
 jupyter = { depends-on = [{ environment = "jupyter", task = "start" }] }
 
-# Task to run the ND2 to TIFF converter GUI
-# Run with: `pixi run nd2-gui`
-nd2-gui = "python convert_nd2_screen_to_stacks_gui.py"
-
 [dependencies]
 # Core dependencies required for the base environment.
 python = "3.10.*"
@@ -29,9 +25,6 @@ omero-py = ">=5.21.0,<6"
 # Python packages from PyPI
 ezomero = ">=3.2.1, <4"
 omero-cli-zarr = ">=0.6.1, <0.7"
-nd2 = ">=0.10.4, <0.11"
-tifffile = ">=2024.0.0, <2025"
-customtkinter = ">=5.2.0, <6"
 
 # A feature for users who want to use JupyterLab.
 [feature.jupyter]

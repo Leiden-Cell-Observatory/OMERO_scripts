@@ -12,8 +12,8 @@ import sys
 import platform
 from pathlib import Path
 
-# Import the conversion function from the original script
-from convert_nd2_screen_to_stacks import convert_nd2_to_tiff_by_well_stack
+# Import the conversion function from the converter module
+from .converter import convert_nd2_to_tiff_by_well_stack
 
 
 class TextRedirector:
