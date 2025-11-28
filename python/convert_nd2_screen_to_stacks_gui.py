@@ -9,6 +9,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import threading
 import sys
+import platform
 from pathlib import Path
 
 # Import the conversion function from the original script
@@ -37,19 +38,34 @@ class ND2ConverterGUI:
         self.root = root
         self.root.title("ND2 to TIFF Converter")
 
-        # Set a larger default window size with better resolution
-        self.root.geometry("1100x900")
+        # Set appearance mode and color theme FIRST
+        ctk.set_appearance_mode("system")
+        ctk.set_default_color_theme("blue")
 
-        # Set minimum window size to prevent it from being too small
-        self.root.minsize(800, 600)
+        # Platform-specific DPI handling
+        # Linux: DPI awareness not implemented in CustomTkinter - need manual scaling
+        # Windows/Mac: Automatic DPI detection available but can be problematic
+        current_platform = platform.system()
 
-        # Set appearance mode and color theme
-        ctk.set_appearance_mode("system")  # Options: "system", "dark", "light"
-        ctk.set_default_color_theme("blue")  # Options: "blue", "green", "dark-blue"
+        if current_platform == "Linux":
+            # Deactivate automatic DPI awareness and use manual scaling for Linux
+            # Widget scaling makes the window larger but doesn't scale fonts automatically
+            # So we need MUCH larger base font sizes to compensate
+            ctk.deactivate_automatic_dpi_awareness()
+            ctk.set_widget_scaling(2.5)  # Moderate widget scaling
+            ctk.set_window_scaling(2.5)
+            self.base_font_size = 24  # Much larger base font for Linux (fonts don't auto-scale)
+            self.default_scaling = "250%"
+        else:
+            # Windows and macOS have automatic DPI detection
+            ctk.set_widget_scaling(2.0)
+            ctk.set_window_scaling(2.0)
+            self.base_font_size = 14  # Standard base font for Windows/Mac
+            self.default_scaling = "200%"
 
-        # Set better default scaling for Linux/high-DPI displays
-        ctk.set_widget_scaling(1.2)  # 120% default scaling
-        ctk.set_window_scaling(1.2)  # Also scale the window elements
+        # Set window size AFTER scaling
+        self.root.geometry("1400x1000")
+        self.root.minsize(1000, 800)
 
         # Variables for file paths
         self.nd2_file = ctk.StringVar()
@@ -85,7 +101,7 @@ class ND2ConverterGUI:
         title_label = ctk.CTkLabel(
             main_frame,
             text="ND2 to TIFF Converter",
-            font=ctk.CTkFont(size=28, weight="bold")
+            font=ctk.CTkFont(family="Roboto", size=self.base_font_size + 18, weight="bold")
         )
         title_label.grid(row=current_row, column=0, pady=(0, 20))
         current_row += 1
@@ -98,7 +114,8 @@ class ND2ConverterGUI:
         current_row += 1
 
         # Appearance Mode
-        ctk.CTkLabel(settings_frame, text="Appearance:", font=ctk.CTkFont(size=13)).grid(
+        ctk.CTkLabel(settings_frame, text="Appearance:",
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).grid(
             row=0, column=0, padx=(15, 5), pady=10, sticky="w"
         )
         self.appearance_menu = ctk.CTkOptionMenu(
@@ -111,16 +128,17 @@ class ND2ConverterGUI:
         self.appearance_menu.grid(row=0, column=1, padx=(0, 20), pady=10, sticky="w")
 
         # UI Scaling
-        ctk.CTkLabel(settings_frame, text="UI Scale:", font=ctk.CTkFont(size=13)).grid(
+        ctk.CTkLabel(settings_frame, text="UI Scale:",
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).grid(
             row=0, column=2, padx=(15, 5), pady=10, sticky="w"
         )
         self.scaling_menu = ctk.CTkOptionMenu(
             settings_frame,
-            values=["80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%"],
+            values=["80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%", "160%", "175%", "200%", "250%", "300%"],
             command=self.change_scaling,
-            width=120
+            width=130
         )
-        self.scaling_menu.set("120%")  # Default to 120% for better readability
+        self.scaling_menu.set(self.default_scaling)  # Platform-specific default scaling
         self.scaling_menu.grid(row=0, column=3, padx=(0, 15), pady=10, sticky="w")
 
         # File selection section
@@ -130,11 +148,12 @@ class ND2ConverterGUI:
         current_row += 1
 
         ctk.CTkLabel(file_frame, text="Input File",
-                    font=ctk.CTkFont(size=18, weight="bold")).grid(
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size + 6, weight="bold")).grid(
             row=0, column=0, columnspan=3, padx=15, pady=(15, 10), sticky="w"
         )
 
-        ctk.CTkLabel(file_frame, text="ND2 File:", font=ctk.CTkFont(size=13)).grid(
+        ctk.CTkLabel(file_frame, text="ND2 File:",
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).grid(
             row=1, column=0, padx=(15, 10), pady=(0, 15), sticky="w"
         )
         self.nd2_entry = ctk.CTkEntry(file_frame, textvariable=self.nd2_file,
@@ -150,11 +169,12 @@ class ND2ConverterGUI:
         current_row += 1
 
         ctk.CTkLabel(output_frame, text="Output Settings",
-                    font=ctk.CTkFont(size=18, weight="bold")).grid(
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size + 6, weight="bold")).grid(
             row=0, column=0, columnspan=3, padx=15, pady=(15, 10), sticky="w"
         )
 
-        ctk.CTkLabel(output_frame, text="Export Folder:", font=ctk.CTkFont(size=13)).grid(
+        ctk.CTkLabel(output_frame, text="Export Folder:",
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).grid(
             row=1, column=0, padx=(15, 10), pady=(0, 5), sticky="w"
         )
         self.export_entry = ctk.CTkEntry(output_frame, textvariable=self.export_folder,
@@ -163,7 +183,8 @@ class ND2ConverterGUI:
         ctk.CTkButton(output_frame, text="Browse", command=self.browse_export,
                      width=100).grid(row=1, column=2, padx=(0, 15), pady=(0, 5))
 
-        ctk.CTkLabel(output_frame, text="File Prefix:", font=ctk.CTkFont(size=13)).grid(
+        ctk.CTkLabel(output_frame, text="File Prefix:",
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).grid(
             row=2, column=0, padx=(15, 10), pady=(5, 15), sticky="w"
         )
         self.prefix_entry = ctk.CTkEntry(output_frame, textvariable=self.file_prefix,
@@ -177,7 +198,7 @@ class ND2ConverterGUI:
         current_row += 1
 
         ctk.CTkLabel(options_frame, text="Conversion Options",
-                    font=ctk.CTkFont(size=18, weight="bold")).grid(
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size + 6, weight="bold")).grid(
             row=0, column=0, columnspan=2, padx=15, pady=(15, 10), sticky="w"
         )
 
@@ -193,19 +214,25 @@ class ND2ConverterGUI:
 
         # Left column options with larger font
         ctk.CTkCheckBox(options_left, text="Skip OME metadata",
-                       variable=self.skip_ome, font=ctk.CTkFont(size=13)).pack(anchor="w", pady=5)
+                       variable=self.skip_ome,
+                       font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).pack(anchor="w", pady=5)
         ctk.CTkCheckBox(options_left, text="Separate channels",
-                       variable=self.separate_channels, font=ctk.CTkFont(size=13)).pack(anchor="w", pady=5)
+                       variable=self.separate_channels,
+                       font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).pack(anchor="w", pady=5)
         ctk.CTkCheckBox(options_left, text="Separate Z-slices",
-                       variable=self.separate_z, font=ctk.CTkFont(size=13)).pack(anchor="w", pady=5)
+                       variable=self.separate_z,
+                       font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).pack(anchor="w", pady=5)
 
         # Right column options with larger font
         ctk.CTkCheckBox(options_right, text="Separate time points",
-                       variable=self.separate_t, font=ctk.CTkFont(size=13)).pack(anchor="w", pady=5)
+                       variable=self.separate_t,
+                       font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).pack(anchor="w", pady=5)
         ctk.CTkCheckBox(options_right, text="Guess missing position names",
-                       variable=self.guess_names, font=ctk.CTkFont(size=13)).pack(anchor="w", pady=5)
+                       variable=self.guess_names,
+                       font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).pack(anchor="w", pady=5)
         ctk.CTkCheckBox(options_right, text="Max projection only",
-                       variable=self.max_projection, font=ctk.CTkFont(size=13)).pack(anchor="w", pady=5)
+                       variable=self.max_projection,
+                       font=ctk.CTkFont(family="Roboto", size=self.base_font_size)).pack(anchor="w", pady=5)
 
         # Control buttons
         button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -218,7 +245,7 @@ class ND2ConverterGUI:
             command=self.start_conversion,
             width=140,
             height=36,
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=ctk.CTkFont(family="Roboto", size=self.base_font_size, weight="bold")
         )
         self.convert_button.grid(row=0, column=0, padx=10)
 
@@ -248,12 +275,13 @@ class ND2ConverterGUI:
         current_row += 1
 
         ctk.CTkLabel(log_frame, text="Progress Log",
-                    font=ctk.CTkFont(size=18, weight="bold")).grid(
+                    font=ctk.CTkFont(family="Roboto", size=self.base_font_size + 6, weight="bold")).grid(
             row=0, column=0, padx=15, pady=(15, 10), sticky="w"
         )
 
         self.log_text = ctk.CTkTextbox(log_frame, height=250, state='disabled',
-                                       wrap="word", font=ctk.CTkFont(family="Courier", size=12))
+                                       wrap="word",
+                                       font=ctk.CTkFont(family="Courier", size=self.base_font_size - 1))
         self.log_text.grid(row=1, column=0, padx=15, pady=(0, 15), sticky="ew")
 
         # Configure text tags for colored output
@@ -264,7 +292,7 @@ class ND2ConverterGUI:
         self.status_label = ctk.CTkLabel(
             main_frame,
             text="Ready",
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(family="Roboto", size=self.base_font_size),
             anchor="w"
         )
         self.status_label.grid(row=current_row, column=0, sticky="ew", pady=(0, 0))
