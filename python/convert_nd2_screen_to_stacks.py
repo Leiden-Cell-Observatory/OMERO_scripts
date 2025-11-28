@@ -494,7 +494,31 @@ def convert_nd2_to_tiff_by_well_stack(
             
             # Create and save maximum intensity projections if requested and we have multiple Z slices
             if max_projection and num_z > 1:
-                if has_time and separate_t:
+                if has_time and separate_t and separate_channels:
+                    # For time series with separate_t and separate_channels: save each time point and channel separately
+                    # Input shape: (T, Z, C, Y, X) -> Output shape per file: (1, 1, 1, Y, X)
+                    max_proj_data = np.max(position_data, axis=1)  # Shape: (T, C, Y, X)
+                    
+                    for t in range(num_time):
+                        for c in range(num_channels):
+                            if file_prefix:
+                                proj_filename = f"{file_prefix}{position_name}_t{t+1:03d}_ch{c+1}.tif"
+                            else:
+                                proj_filename = f"{base_output_filename}_t{t+1:03d}_ch{c+1}_max.tif"
+                            
+                            proj_path = output_dir / proj_filename
+                            print(f"Saving max projection for time {t+1}, channel {c+1} to: {proj_path}")
+                            
+                            # Extract single time point and channel
+                            time_channel_proj = max_proj_data[t, c]  # Shape: (Y, X)
+                            
+                            # Save without OME metadata (single 2D image)
+                            tifffile.imwrite(
+                                proj_path,
+                                time_channel_proj,
+                                **common_imwrite_params
+                            )
+                elif has_time and separate_t:
                     # For time series with separate_t: save each time point's max projection separately
                     # Input shape: (T, Z, C, Y, X) -> Output shape per file: (1, 1, C, Y, X)
                     max_proj_data = np.max(position_data, axis=1)  # Shape: (T, C, Y, X)
@@ -516,6 +540,34 @@ def convert_nd2_to_tiff_by_well_stack(
                         tifffile.imwrite(
                             proj_path,
                             time_proj_with_tz,
+                            metadata={"axes": "TZCYX"} if not skip_ome else None,
+                            description=ome_xml,
+                            **common_imwrite_params
+                        )
+                elif has_time and separate_channels:
+                    # For time series with separate_channels: save each channel separately with all time points
+                    # Input shape: (T, Z, C, Y, X) -> Output shape per file: (T, 1, 1, Y, X)
+                    max_proj_data = np.max(position_data, axis=1)  # Shape: (T, C, Y, X)
+                    
+                    for c in range(num_channels):
+                        if file_prefix:
+                            proj_filename = f"{file_prefix}{position_name}_ch{c+1}.ome.tif"
+                        else:
+                            proj_filename = f"{base_output_filename}_ch{c+1}_max.ome.tif"
+                        
+                        proj_path = output_dir / proj_filename
+                        print(f"Saving time series max projection for channel {c+1} to: {proj_path}")
+                        
+                        # Extract single channel across all time points: (T, Y, X)
+                        channel_proj = max_proj_data[:, c]
+                        
+                        # Add Z dimension for TZCYX format (T, 1, 1, Y, X) - need single channel dimension too
+                        channel_proj_with_zc = np.expand_dims(np.expand_dims(channel_proj, axis=1), axis=1)
+                        
+                        # Save with modified metadata
+                        tifffile.imwrite(
+                            proj_path,
+                            channel_proj_with_zc,
                             metadata={"axes": "TZCYX"} if not skip_ome else None,
                             description=ome_xml,
                             **common_imwrite_params
