@@ -1,0 +1,60 @@
+[project]
+name = "nd2-converter"
+version = "1.0.0"
+description = "A modern GUI and CLI tool for converting multi-position ND2 files to TIFF files"
+authors = [
+    { name = "Maarten Paul", email = "maarten.paul@gmail.com" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["nd2", "tiff", "microscopy", "image-conversion", "gui"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+dependencies = [
+    "nd2>=0.10.4",
+    "tifffile>=2024.0.0",
+    "customtkinter>=5.2.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+nd2-converter-gui = "nd2_converter.gui:main"
+nd2-converter = "nd2_converter.converter:main"
+
+[project.urls]
+Homepage = "https://github.com/Leiden-Cell-Observatory/OMERO_scripts"
+Repository = "https://github.com/Leiden-Cell-Observatory/OMERO_scripts"
+Issues = "https://github.com/Leiden-Cell-Observatory/OMERO_scripts/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nd2_converter"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
