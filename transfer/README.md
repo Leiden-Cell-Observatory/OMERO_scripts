@@ -19,15 +19,20 @@ conda activate omero
 omero login
 #provide the connection details and credentials
 
-omero transfer pack Plate:1 Plate1.tar
+omero transfer pack Plate:1 Plate1.zip
 
 #This can be Image, Project, Dataset, Plate or Screen
 
 #extract only metadata
-omero transfer pack --binaries none Screen:1 Screen2_metadata.tar
+omero transfer pack --binaries none Screen:1 Screen1_metadata.zip
 
 #create a simplified folder structure
 omero transfer pack --simple Plate:1 Plate1.tar
+
+#multiple datasets
+omero transfer pack --zip Dataset:123 transfer_pack.zip --simple
+omero transfer pack --zip Dataset:123,125 transfer_pack.zip --simple
+omero transfer pack --zip Dataset:123-125 transfer_pack.zip --simple
 
 ```
 
