@@ -1,5 +1,5 @@
 # Setup OMERO CLI
-OMERO CLI only works only Linux (possibly Mac)
+OMERO CLI works on Windows but when having issues try Linux or Mac
 
 ### install conda
 ```
