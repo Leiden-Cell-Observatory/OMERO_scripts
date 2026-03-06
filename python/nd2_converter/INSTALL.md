@@ -66,7 +66,11 @@ This creates an editable installation - changes to the code are immediately refl
 You can run the tool directly from GitHub without cloning:
 
 ```bash
-uvx --from git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts#subdirectory=python/nd2_converter nd2-converter-gui
+# Using the gui branch (current)
+uvx --from git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts@gui#subdirectory=python/nd2_converter nd2-converter-gui
+
+# After merging to main, you can use:
+# uvx --from git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts#subdirectory=python/nd2_converter nd2-converter-gui
 ```
 
 ## Updating
@@ -82,7 +86,11 @@ uv pip install --upgrade .
 
 ### If installed from GitHub:
 ```bash
-uv pip install --upgrade git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts#subdirectory=python/nd2_converter
+# Using the gui branch (current)
+uv pip install --upgrade git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts@gui#subdirectory=python/nd2_converter
+
+# After merging to main:
+# uv pip install --upgrade git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts#subdirectory=python/nd2_converter
 ```
 
 ## Uninstalling
@@ -118,20 +126,3 @@ python --version
 ```
 
 If you have multiple Python versions, uv will automatically use a compatible one.
-
-## Why uv?
-
-- **Fast**: 10-100x faster than pip
-- **Reliable**: Deterministic dependency resolution
-- **Simple**: Single binary, no conda needed
-- **Isolated**: Each project gets its own environment
-- **Cross-platform**: Works the same on Windows, macOS, and Linux
-
-## Comparison with pixi
-
-The main OMERO scripts still use `pixi` because they require conda packages (OMERO dependencies). The ND2 converter has been separated out because it:
-- Doesn't need OMERO
-- All dependencies are available on PyPI
-- Can be distributed more easily with uv
-
-This makes it much simpler for end users who just want to convert ND2 files!

@@ -72,11 +72,13 @@ nd2-converter --help     # CLI help
 
 ```bash
 # Run GUI directly from GitHub (no clone needed!)
-uvx --from git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts#subdirectory=python/nd2_converter nd2-converter-gui
+uvx --from git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts@gui#subdirectory=python/nd2_converter nd2-converter-gui
 
 # Or install from GitHub
-uv pip install git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts#subdirectory=python/nd2_converter
+uv pip install git+https://github.com/Leiden-Cell-Observatory/OMERO_scripts@gui#subdirectory=python/nd2_converter
 ```
+
+**Note**: The ND2 converter is currently on the `gui` branch. Once merged to `main`, you can omit `@gui` from the URLs above.
 
 ## Using the GUI
 
