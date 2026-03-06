@@ -3,11 +3,12 @@ omero_zarr_export.py
 
 Export plates from OMERO as OME-Zarr files, optionally discovering all plates
 within a screen. Wraps the omero-cli-zarr plugin (`omero zarr export`) and
-handles naming, folder structure, and optional zipping.
+handles naming, folder structure, optional zipping, and resume.
 
 Usage examples:
   python omero_zarr_export.py
   python omero_zarr_export.py --object Screen:5 --output ./zarr_exports
+  python omero_zarr_export.py --object Screen:5 --output ./zarr_exports --resume
   python omero_zarr_export.py --object Plate:16 --server omero.example.org --zip
 
 Requirements:
@@ -105,6 +106,7 @@ def run_zarr_export(
     """
     Call `omero zarr export Plate:ID` as a subprocess using credentials.
     Always uses username/password to avoid stale session key issues.
+    Output is streamed directly to the terminal.
     Returns True on success, False on failure.
     """
     auth_args = ["-s", server, "-u", username, "-w", password]
@@ -123,10 +125,10 @@ def run_zarr_export(
     if tile_height:
         cmd += ["--tile_height", str(tile_height)]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Run without capturing output so omero zarr progress is visible in terminal
+    result = subprocess.run(cmd)
     if result.returncode != 0:
         console.print(f"[red]Export failed for Plate:{plate_id}[/red]")
-        console.print(result.stderr)
         return False
     return True
 
@@ -180,6 +182,10 @@ def main(
         help="Object to export, e.g. Screen:5 or Plate:16"
     ),
     output: Path = typer.Option(Path("."), "--output", help="Base output directory"),
+    resume: bool = typer.Option(
+        False, "--resume",
+        help="Skip plates already successfully exported; retry partial exports"
+    ),
     zip_output: bool = typer.Option(False, "--zip", help="Zip each zarr folder after export"),
     tile_width: Optional[int] = typer.Option(None, "--tile-width", help="Zarr chunk tile width"),
     tile_height: Optional[int] = typer.Option(None, "--tile-height", help="Zarr chunk tile height"),
@@ -250,11 +256,27 @@ def main(
 
     # Export each plate sequentially
     success_count = 0
+    skip_count = 0
+
     for i, (plate_id, plate_name, out_dir) in enumerate(jobs, 1):
         console.print(
             f"\n[bold]({i}/{len(jobs)})[/bold] Exporting Plate:{plate_id}"
             f" [dim]({plate_name})[/dim]"
         )
+
+        # --resume: skip plates whose renamed zarr already exists (completed previously)
+        safe_name = slugify(plate_name)
+        completed_path = out_dir / f"{safe_name}.ome.zarr"
+        if resume and completed_path.exists():
+            console.print(f"  [dim]Already exported as {completed_path.name}, skipping.[/dim]")
+            success_count += 1
+            skip_count += 1
+            continue
+
+        # Warn if a partial export exists — omero zarr will attempt to resume it
+        partial_path = out_dir / f"{plate_id}.ome.zarr"
+        if partial_path.exists():
+            console.print(f"  [yellow]Partial export found, resuming...[/yellow]")
 
         ok = run_zarr_export(
             plate_id, out_dir, server, port, username, password,
@@ -273,8 +295,10 @@ def main(
         success_count += 1
 
     console.rule()
+    exported = success_count - skip_count
     console.print(
-        f"[bold]Done:[/bold] {success_count}/{len(jobs)} plates exported successfully."
+        f"[bold]Done:[/bold] {exported} exported, {skip_count} skipped, "
+        f"{len(jobs) - success_count} failed — {success_count}/{len(jobs)} total OK."
     )
 
 
