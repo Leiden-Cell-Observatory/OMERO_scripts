@@ -24,7 +24,6 @@ from typing import Optional
 import typer
 from omero.gateway import BlitzGateway
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 console = Console()
 app = typer.Typer(add_completion=False)
@@ -36,7 +35,8 @@ app = typer.Typer(add_completion=False)
 
 def get_current_session():
     """
-    Read the active omero CLI session from ~/.omero/sessions (same as omero CLI).
+    Read the last-used server and username from the omero CLI session store
+    (~/.omero/sessions). Used only to pre-fill interactive prompts.
     Returns (server, username, session_key, port) or (None, None, None, None).
     """
     try:
@@ -56,8 +56,11 @@ def slugify(name: str) -> str:
 
 
 def connect(server: str, port: int, username: str = None,
-            password: str = None, session_key: str = None) -> BlitzGateway:
-    """Connect via password or reuse an existing session key."""
+            password: str = None, session_key: str = None) -> Optional[BlitzGateway]:
+    """
+    Connect to OMERO via session key or username/password.
+    Returns None on failure so the caller can decide to retry.
+    """
     if session_key:
         conn = BlitzGateway(host=server, port=port, secure=True)
         conn.connect(sUuid=session_key)
@@ -65,8 +68,7 @@ def connect(server: str, port: int, username: str = None,
         conn = BlitzGateway(username, password, host=server, port=port, secure=True)
         conn.connect()
     if not conn.isConnected():
-        console.print("[red]Could not connect to OMERO. Check credentials/server.[/red]")
-        raise typer.Exit(1)
+        return None
     conn.c.enableKeepAlive(60)
     return conn
 
@@ -99,19 +101,15 @@ def run_zarr_export(
     password: str,
     tile_width: Optional[int],
     tile_height: Optional[int],
-    session_key: str = None,
 ) -> bool:
     """
-    Call `omero zarr export Plate:ID` as a subprocess.
+    Call `omero zarr export Plate:ID` as a subprocess using credentials.
+    Always uses username/password to avoid stale session key issues.
     Returns True on success, False on failure.
-    The output will be written as <output_dir>/<plate_id>.ome.zarr.
     """
-    if session_key:
-        auth_args = ["-s", server, "-k", session_key]
-    else:
-        auth_args = ["-s", server, "-u", username, "-w", password]
+    auth_args = ["-s", server, "-u", username, "-w", password]
 
-    # Only pass port explicitly if non-default to avoid "port specified twice" errors
+    # Only pass port if non-default to avoid "port specified twice" errors
     if port != 4064:
         auth_args += ["-p", str(port)]
 
@@ -190,24 +188,16 @@ def main(
 
     console.rule("[bold blue]OMERO Zarr Export[/bold blue]")
 
-    # Try to reuse an existing omero CLI session (same store as `omero login`)
+    # Read session store only to pre-fill server and username defaults
     sess_server, sess_user, session_key, sess_port = get_current_session()
 
-    if session_key and not any([server, username, password]):
-        # Reuse existing session — no credentials needed
-        console.print(f"[dim]Reusing session for {sess_user}@{sess_server}[/dim]")
-        server = sess_server
-        username = sess_user
-        port = sess_port
-    else:
-        # Ignore stored session if credentials were explicitly provided
-        session_key = None
-        if not server:
-            server = typer.prompt("OMERO server", default=sess_server or "")
-        if not username:
-            username = typer.prompt("Username", default=sess_user or "")
-        if not password:
-            password = typer.prompt("Password", hide_input=True)
+    # Prompt for any missing credentials, using session store values as defaults
+    if not server:
+        server = typer.prompt("OMERO server", default=sess_server or "")
+    if not username:
+        username = typer.prompt("Username", default=sess_user or "")
+    if not password:
+        password = typer.prompt("Password", hide_input=True)
 
     if not object_id:
         object_id = typer.prompt("Object to export (e.g. Screen:5 or Plate:16)")
@@ -220,10 +210,14 @@ def main(
     obj_type = match.group(1).capitalize()
     obj_id = int(match.group(2))
 
-    # Connect via BlitzGateway to resolve screen/plate names before exporting
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), transient=True) as progress:
-        progress.add_task("Connecting to OMERO...")
-        conn = connect(server, port, username, password, session_key)
+    # Connect via BlitzGateway to resolve names — try session key first, fall back to password
+    console.print(f"[dim]Connecting to {server}...[/dim]")
+    conn = connect(server, port, session_key=session_key)
+    if conn is None:
+        conn = connect(server, port, username=username, password=password)
+    if conn is None:
+        console.print("[red]Could not connect to OMERO. Check credentials/server.[/red]")
+        raise typer.Exit(1)
 
     console.print(f"[green]Connected as {conn.getUser().getName()}[/green]")
 
@@ -264,7 +258,7 @@ def main(
 
         ok = run_zarr_export(
             plate_id, out_dir, server, port, username, password,
-            tile_width, tile_height, session_key
+            tile_width, tile_height
         )
         if not ok:
             continue
