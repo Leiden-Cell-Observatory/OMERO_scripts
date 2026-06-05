@@ -6,7 +6,7 @@ library(tidyverse)
 
 # --- Settings: edit these for your experiment -------------------------------
 
-input_csv  <- "metadata.csv"   # ImageXpress metadata export
+input_csv  <- "image_metadata_1.csv"   # ImageXpress metadata export
 output_csv <- "loaddata.csv"   # CellProfiler LoadData file to create
 
 # Folder that the image subfolders (timepoint0, timepoint1, ...) sit in.
@@ -14,18 +14,22 @@ output_csv <- "loaddata.csv"   # CellProfiler LoadData file to create
 # or set an absolute path to write absolute PathNames.
 base_path <- ""
 
-# Map each Wavelength index to a CellProfiler channel name.
-# Names must be alphanumeric/underscore (no spaces or hyphens), so the
-# "CFP-YFP FRET" filter becomes "FRET" here. Confirm this matches your filters.
-channel_map <- c("0" = "CY5", "1" = "FRET", "2" = "CFP")
+# Channel names are taken from the ExcitationEmissionFilter column. CellProfiler
+# names must be alphanumeric/underscore, so any disallowed character (space,
+# hyphen, etc.) is replaced by an underscore, e.g. "CFP-YFP FRET" -> "CFP_YFP_FRET".
+sanitize_name <- function(x) {
+  x <- gsub("[^A-Za-z0-9]+", "_", x)   # runs of disallowed characters -> underscore
+  x <- gsub("^_+|_+$", "", x)          # trim leading/trailing underscores
+  x
+}
 
 # --- Conversion -------------------------------------------------------------
 
 meta <- read_csv(input_csv, show_col_types = FALSE)
 
-# Assign a clean channel name from the Wavelength index
+# Assign a clean channel name from the filter recorded in the metadata
 meta <- meta %>%
-  mutate(Channel = channel_map[as.character(Wavelength)])
+  mutate(Channel = sanitize_name(ExcitationEmissionFilter))
 
 # Use the per-FOV subfolder as the path; optionally make it absolute
 meta <- meta %>%
