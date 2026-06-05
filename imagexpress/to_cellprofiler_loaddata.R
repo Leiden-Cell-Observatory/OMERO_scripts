@@ -6,7 +6,7 @@ library(tidyverse)
 
 # --- Settings: edit these for your experiment -------------------------------
 
-input_csv  <- "image_metadata_1.csv"   # ImageXpress metadata export
+input_csv  <- "metadata.csv"   # ImageXpress metadata export
 output_csv <- "loaddata.csv"   # CellProfiler LoadData file to create
 
 # Folder that the image subfolders (timepoint0, timepoint1, ...) sit in.
